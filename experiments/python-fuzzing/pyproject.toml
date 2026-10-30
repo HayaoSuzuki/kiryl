@@ -36,6 +36,7 @@ error-on-warning = true
 
 [dependency-groups]
 dev = [
+    "pytest-cov==7.1.0",
     "ruff==0.17.3",
     "ty==0.0.95",
 ]

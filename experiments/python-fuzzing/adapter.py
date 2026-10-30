@@ -18,6 +18,7 @@ import pytest
 from hypothesis import is_hypothesis_test
 
 from hypothesis_bridge import ShrinkEvidence, bind_target, unpack_token
+from monitor import BranchMonitor
 
 
 @dataclass
@@ -40,6 +41,7 @@ class CaseResult:
     rendered: str | None = None
     verification: str = "pending"
     database_replay: bool = False
+    features: tuple[str, ...] = ()
 
 
 @dataclass
@@ -49,6 +51,7 @@ class SessionEvidence:
     selected: list[str] = field(default_factory=list)
     cases: list[CaseResult] = field(default_factory=list)
     fixture_events: list[tuple[str, str]] = field(default_factory=list)
+    coverage_roots: tuple[str, ...] = ()
 
 
 class CaseDriver(Protocol):
@@ -81,12 +84,16 @@ class _Session:
         invocations: list[Invocation],
         driver: CaseDriver | None,
         operation: Callable[[pytest.Function], None] | None = None,
+        *,
+        collect_coverage: bool = True,
     ) -> None:
         self.invocations = invocations
         self.driver = driver
         self.evidence = SessionEvidence()
         self.error: Exception | None = None
         self.operation = operation
+        self._test_files: tuple[Path, ...] = ()
+        self.collect_coverage = collect_coverage
 
     def pytest_configure(self, config: pytest.Config) -> None:
         config.stash[FIXTURE_EVENTS] = self.evidence.fixture_events
@@ -101,6 +108,9 @@ class _Session:
             if isinstance(item, pytest.Function) and is_hypothesis_test(item.obj)
         }
         self.evidence.selected = list(items)
+        if self.collect_coverage:
+            self.evidence.coverage_roots = (str(session.config.rootpath.resolve()),)
+        self._test_files = tuple(item.path for item in session.items)
         if not items:
             self.error = ValueError("selection contains no supported Hypothesis tests")
             return True
@@ -161,17 +171,31 @@ class _Session:
             return
         target = bind_target(item)
         fixed = iter(invocation.buffers)
-        while True:
-            raw = self.driver.next_case(item.nodeid) if self.driver else next(fixed, None)
-            if raw is None:
-                return
-            evaluated = target.check(raw)
-            case = CaseResult(item.nodeid, **vars(evaluated))
-            self.evidence.cases.append(case)
-            if self.driver:
-                self.driver.observe(case)
-            if case.kind == "failure":
-                return
+        monitor = (
+            BranchMonitor((item.config.rootpath,), excluded=self._test_files)
+            if self.collect_coverage
+            else None
+        )
+        try:
+            while True:
+                raw = self.driver.next_case(item.nodeid) if self.driver else next(fixed, None)
+                if raw is None:
+                    return
+                if monitor:
+                    monitor.start_case()
+                try:
+                    evaluated = target.check(raw)
+                finally:
+                    features = monitor.finish_case() if monitor else ()
+                case = CaseResult(item.nodeid, **vars(evaluated), features=features)
+                self.evidence.cases.append(case)
+                if self.driver:
+                    self.driver.observe(case)
+                if case.kind == "failure":
+                    return
+        finally:
+            if monitor:
+                monitor.close()
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.failed:
@@ -181,10 +205,14 @@ class _Session:
 
 
 def run_session(
-    pytest_args: list[str], invocations: list[Invocation], driver: CaseDriver | None = None
+    pytest_args: list[str],
+    invocations: list[Invocation],
+    driver: CaseDriver | None = None,
+    *,
+    collect_coverage: bool = True,
 ) -> SessionEvidence:
     """Collect and execute finite invocations inside one real pytest session."""
-    plugin = _Session(invocations, driver)
+    plugin = _Session(invocations, driver, collect_coverage=collect_coverage)
     result = pytest.main(pytest_args, plugins=[plugin])
     if plugin.error:
         raise plugin.error
@@ -230,6 +258,7 @@ def replay(nodeid: str, token: bytes, pytest_args: list[str]) -> CaseResult:
         for key in ("canonical", "replay_token"):
             if value.get(key) is not None:
                 value[key] = bytes.fromhex(value[key])
+        value["features"] = tuple(value.get("features", ()))
         return CaseResult(**value)
 
 
@@ -278,4 +307,7 @@ def _replay_main() -> None:
 
 
 if __name__ == "__main__":
+    # Fixtures importing the adapter must see the same stash key/class objects
+    # as the bootstrap, rather than a second import under a different name.
+    sys.modules["adapter"] = sys.modules[__name__]
     _replay_main()

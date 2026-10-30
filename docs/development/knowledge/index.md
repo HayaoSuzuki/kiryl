@@ -17,6 +17,8 @@ implementation correctness or human review.
   observations, Lean-model correspondence, and remaining limits.
 - [Hypothesis replay audit](hypothesis-replay-audit.md): Stateful/ordinary database
   replay, semantic shrinking, budget checks, and unverified boundaries.
+- [Python coverage audit](python-coverage-audit.md): Per-case application feedback,
+  monitoring ownership, coexistence limitations, and measured component overhead.
 
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.

@@ -161,10 +161,57 @@ Task 2 source snapshots (working tree after `7bf03ad`):
 | `hypothesis_bridge.py` | `ab31411c0308f9c5dc4841e1b46aeefb2671e4101dd0e6abb49edb70f883b3da` |
 | `tests/test_replay.py` | `045a2263c93d47e4a88ff4f5808a145c493a4b2328def1d2145ba1afd07fe43c` |
 
+## Task 3: isolated application branch feedback
+
+The combined suite passed 36 tests on native macOS arm64 CPython 3.14.9 and
+3.15.2. With pytest-cov 7.1.0 / coverage 7.17.0 and branch collection enabled,
+both runtimes also passed all 36. A separate 3.14 run using
+`COVERAGE_CORE=ctrace` with `--cov-context=test` passed all 36.
+
+Known upstream limits are retained: coverage's `sysmon` core warned that dynamic
+contexts are incomplete; that configuration is not claimed supported for accurate
+context attribution. coverage.py also raised before our callback for an artificially
+NUL-containing code filename. The adapter's NUL defense is tested in a child
+without upstream coverage hooks, not presented as evidence for that unsupported
+combined configuration. The initial full coexistence run failed that one boundary
+case; separating the premises restored a meaningful combined suite.
+
+| Self-review | Finding/action and evidence |
+| --- | --- |
+| 1: contract | Repeated left/right cases have isolated edges; collected oracle/test files and framework paths are excluded, and actual coverage roots are returned. IDs match a fresh interpreter |
+| 2: errors/boundaries | Exhausted slots refuse execution without stealing another tool. Source read/invalid filename errors are deferred as monitoring infrastructure failures instead of injected target exceptions. Generated `<string>` code is excluded rather than read as a file |
+| 3: state/ownership | CodeType structural equality merged different source files; cache by object identity while retaining the object to prevent ID reuse. Closing twice cannot free a slot reused by another client. Fresh replay's module alias preserves fixture stash identity |
+| 4: properties/sensitivity | Up to 20 generated true/false schedules, repeated-edge reset checks, independent client disabled-event and new-branch delivery checks. A method-call-removal mutant deleting the feature reset was detected after a fresh green baseline |
+| 5: design/evidence | Stable source/code/environment IDs stay inside the Python owner; no global restart_events calls. Ruff ALL/format and ty all-error pass. Coverage coexistence limitations and bounded timing observations are explicit |
+
+The reproducible `measure_monitor.py` runs the same 2,000 fixed-input adapter cases
+with collection off/on. One local observation recorded 159,693,417 ns without
+monitoring and 194,432,625 ns with monitoring, including pytest setup. This is a
+same-process pair with disabled mode first, not a statistical performance claim,
+an IPC measurement, or a bug-discovery comparison. No acceptance threshold was
+invented. The off switch belongs to this experiment/ablation interface, not a
+product promise of unguided operation.
+
+Coexistence commands extend the integration-suite command with
+`--cov=monitor --cov-branch --cov-report=term`; the contexts probe adds
+`--cov-context=test` and explicitly selects `COVERAGE_CORE=ctrace` for its supported
+observation. Set `COVERAGE_FILE` to a temporary result path so generated coverage
+data is not repository evidence. The behavioral checks, not the reported
+statement percentage, establish the observed coexistence slice.
+
+Task 3 source snapshots (working tree after `a367509`):
+
+| Source | SHA-256 at observation |
+| --- | --- |
+| `monitor.py` | `fc6c5cbf33ada4a7c0aaf77154d431f0aa76eba15009505a82c4dca3e450fac3` |
+| `adapter.py` | `a1668f770bd286098017e6f3a819d775f1e7f4d05b4c54089bb886bf1eeff214` |
+| `tests/test_monitor.py` | `6b9efe9775d7216479feb4f215e17d9bd92a0f27ab42f11f005e9236393a0211` |
+| `measure_monitor.py` | `6d47a2efd2820b4ea8734deeea22fbebce0b7f6baadad861c93493f83392f012` |
+
 ## Remaining gates
 
-Per-case monitoring, Rust supervision, native crash recovery, OS process limits,
-and coverage-guided discovery remain unverified. The sampled adapter/shrink
-results above do not close those gates. No Rust experimental boundary exists
+Rust supervision, native crash recovery, OS process limits, and coverage-guided
+discovery remain unverified. Sampled adapter/shrink/monitoring results above do
+not close those gates. No Rust experimental boundary exists
 yet, so proptest/cargo-fuzz execution is pending Tasks 4-6, not reported as done.
 Production engine choice and full platform acceptance remain open.

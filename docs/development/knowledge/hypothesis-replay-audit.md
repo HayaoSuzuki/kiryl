@@ -6,12 +6,10 @@ status: draft
 sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
-  working_tree: modified
-  sha256: c2f16bf7f4698ab8bf5719ef6878a45b450d6dc24dc8091f780b515f598e37d1
+  revision: a36750985a30bee80e1920dfe3279f06fae45bac
 - id: bridge
   resource: ../../../experiments/python-fuzzing/hypothesis_bridge.py
-  working_tree: modified
-  sha256: ab31411c0308f9c5dc4841e1b46aeefb2671e4101dd0e6abb49edb70f883b3da
+  revision: a36750985a30bee80e1920dfe3279f06fae45bac
 ---
 # Observed contract slice
 

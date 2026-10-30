@@ -48,7 +48,8 @@ The product crate still contains only the development scaffold. The integrated
 Rust/Python architecture and full platform matrix have not been runtime-tested.
 The isolated Python experiment now has limited evidence described in the
 [fixture lifecycle audit](fixture-lifecycle-audit.md) and
-[Hypothesis replay audit](hypothesis-replay-audit.md); neither establishes the
+[Hypothesis replay audit](hypothesis-replay-audit.md), and
+[Python coverage audit](python-coverage-audit.md); these do not establish the
 whole product's compatibility.[^crate]
 
 The first-version acceptance targets include all three operating systems and

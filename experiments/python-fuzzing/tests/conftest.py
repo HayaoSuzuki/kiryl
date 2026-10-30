@@ -63,6 +63,11 @@ def test_expected(n):
     with pytest.raises(ValueError):
         raise ValueError("expected")
 
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(n=st.just(1))
+def test_fixture_failure(value, n):
+    assert n != 1
+
 @given(n=st.just(1))
 def test_reject(n):
     assume(False)
