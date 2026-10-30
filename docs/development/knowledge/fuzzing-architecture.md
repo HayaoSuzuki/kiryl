@@ -9,8 +9,7 @@ sources:
   revision: fed3bcaabbc36c2ddee3d2c6c4858ca1803057fd
 - id: plan
   resource: ../work/coverage-guided-python-fuzzing/feasibility-plan.md
-  working_tree: modified
-  sha256: f47f0a6ce9444b23087dc9b5c3a307d70321ac64f15b969736b0b667af7af526
+  revision: 7bf03ada6ace3ad196eb97fbb4d3f54dd09ea27d
 - id: crate
   resource: ../../../src/lib.rs
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
@@ -48,8 +47,9 @@ complex integration.[^proposal]
 The product crate still contains only the development scaffold. The integrated
 Rust/Python architecture and full platform matrix have not been runtime-tested.
 The isolated Python experiment now has limited evidence described in the
-[fixture lifecycle audit](fixture-lifecycle-audit.md); that does not establish
-the whole product's compatibility.[^crate]
+[fixture lifecycle audit](fixture-lifecycle-audit.md) and
+[Hypothesis replay audit](hypothesis-replay-audit.md); neither establishes the
+whole product's compatibility.[^crate]
 
 The first-version acceptance targets include all three operating systems and
 both specified CPython versions, fixtures/parametrization/stateful testing,

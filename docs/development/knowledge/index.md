@@ -15,6 +15,8 @@ implementation correctness or human review.
   boundary, approved design, and compatibility experiments still required.
 - [Fixture lifecycle audit](fixture-lifecycle-audit.md): Native Python experiment
   observations, Lean-model correspondence, and remaining limits.
+- [Hypothesis replay audit](hypothesis-replay-audit.md): Stateful/ordinary database
+  replay, semantic shrinking, budget checks, and unverified boundaries.
 
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.

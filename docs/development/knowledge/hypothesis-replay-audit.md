@@ -1,0 +1,46 @@
+---
+type: Audit
+title: Hypothesis stateful replay and semantic minimization experiment
+description: Native interpreter observations for database identity, fresh replay, and bounded semantic shrinking.
+status: draft
+sources:
+- id: results
+  resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
+  working_tree: modified
+  sha256: c2f16bf7f4698ab8bf5719ef6878a45b450d6dc24dc8091f780b515f598e37d1
+- id: bridge
+  resource: ../../../experiments/python-fuzzing/hypothesis_bridge.py
+  working_tree: modified
+  sha256: ab31411c0308f9c5dc4841e1b46aeefb2671e4101dd0e6abb49edb70f883b3da
+---
+# Observed contract slice
+
+The experimental adapter's combined 23-test suite passed on native macOS arm64
+with CPython 3.14.9 and 3.15.2. Ordinary and stateful planted failures replayed
+in fresh interpreters and produced semantically smaller witnesses. Ordinary
+pytest replay was tested with generation disabled (`Phase.reuse` only), including
+parameter-variant database isolation. Database-disabled tests still supported
+explicit replay and reported automatic database replay unavailable.[^results]
+
+# Ownership and failure semantics
+
+The exact-version bridge owns raw/choice token representations, environment
+validation, Hypothesis database writes, and semantic shrinking. It acknowledges
+replayable candidate tokens before execution, checks budget after acknowledgment,
+retains the immutable original, and selects the shrinker's best result rather
+than its last attempted failure. Changed failure identity cannot become the
+minimization target. Successful replay of an earlier failure is unstable rather
+than confirmed.[^bridge][^results]
+
+# Limits and recheck conditions
+
+These are sampled integration results. They do not prove arbitrary custom
+strategies, native-crash-safe shrink execution, OS resource enforcement, bounded
+subprocess logs, or Linux/Windows compatibility. Opaque strategy inversion values
+without a safe token encoding fail explicitly; the tested cases did not need
+that representation. No formal theorem about Hypothesis's shrinker is claimed.
+Repeat the observations when the pinned Hypothesis version, bridge, database
+identity, candidate encoding, or budget/verification rules change.[^bridge][^results]
+
+[^results]: [Feasibility observations, five review passes, and source snapshots](../work/coverage-guided-python-fuzzing/feasibility-results.md).
+[^bridge]: [Exact-version Hypothesis integration](../../../experiments/python-fuzzing/hypothesis_bridge.py).

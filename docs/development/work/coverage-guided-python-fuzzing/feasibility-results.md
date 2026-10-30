@@ -2,7 +2,8 @@
 
 These observations concern experimental code, not the complete product.
 Task 1 was executed on 2026-10-31 from documentation baseline `fed3bca` with
-uncommitted implementation sources identified below. Later stages are unrun.
+implementation sources subsequently committed as `7bf03ad`. Task 2 observations
+below concern its subsequent working tree. Later stages are unrun.
 
 ## Task 1: pytest/Hypothesis binding and fixture lifecycles
 
@@ -108,10 +109,62 @@ replanning with the corrected, isolated test project.
 | `formal/ScopeOracle.lean` | `d3618443ebe6f4e905bc8565e5ef7be9b955d2b92d826ad757038001c7ee8270` |
 | `formal/scope-cases.tsv` | `ab5489c2c248fdf450b78273fc9176f32be38bee89c307141ca5e5edc1b465bd` |
 
+## Task 2: stateful replay, database identity, and semantic shrinking
+
+Native macOS arm64: the combined suite passed 23 tests on CPython 3.14.9 and
+3.15.2 with the same Hypothesis/pytest pins. Ordinary integer failures and
+stateful invariant failures replayed in separate interpreters; semantic shrinking
+produced smaller integer/operation-argument witnesses while retaining the
+original and observed failure identity. These are integration probes, not a
+complete native-crash-safe minimization system.
+
+Database interoperability was checked with `Phase.reuse` only: ordinary pytest
+had no generation phase to independently rediscover the planted bug. Both
+ordinary and stateful failures replayed from saved Hypothesis choices. A saved
+parameter variant did not contaminate another variant's database identity.
+`database=None` still supported explicit replay and reported automatic database
+replay unavailable. Raw fuzz inputs and Hypothesis choice encodings remain distinct.
+
+| Self-review | Finding/action and evidence |
+| --- | --- |
+| 1: contract | Strengthened ordinary pytest checks to reuse-only for ordinary/stateful tests, and checked parameter-specific identities; an independently regenerated failure cannot pass this interoperability check |
+| 2: boundaries | Added zero budget, incompatible token, and acknowledgment-delay tests; fixed executing a case after acknowledgment consumed its budget. Explicit version type checks reject bool/float coercion |
+| 3: state | Fresh successful replay of a previous failure is unstable, not confirmed. Preserve that status during minimization. A unittest property exposed bypassed setup/teardown; run its receiver lifecycle around the finite invocation |
+| 4: properties/sensitivity | 75 generated invalid schema versions plus existing generated schedules; targeted shrink-condition equality mutant killed after fresh baseline exit 0. Competing-failure test verifies the original assertion identity survives |
+| 5: design/evidence | Typed compatibility envelope and contained Hypothesis stateful/shrink APIs; preserve original token and select the shrinker's best result rather than the last attempted failure. Ruff ALL, formatting, and ty all-error checks pass |
+
+The shrink callback publishes a replay token before each execution and checks
+remaining time both before and after acknowledgment. Choice-prefix templates
+and PRNG state are encoded without pickle/eval; an opaque `ValueHole` that cannot
+be encoded safely fails explicitly. Tested ordinary/stateful examples did not
+need that unsupported inversion representation. This is a disclosed compatibility
+limit to investigate if encountered, not evidence that every custom strategy works.
+
+The standalone probe uses a fresh interpreter for replay and a pytest invocation
+for semantic shrinking. The later Rust controller must supply process-tree limits,
+bounded logs, fatal-crash recovery, and overall budget enforcement. The Python
+helper's subprocess capture is not a production bounded-output guarantee.
+No new Lean theorem is claimed for Hypothesis's shrinker; Task 1's normal-scope
+correspondence remains exercised by the combined suite.
+
+Commands: the Task 1 integration/Ruff/ty commands now include `tests/test_replay.py`.
+The native 3.15 suite uses its separate locked environment. A targeted hoimin
+0.14.45 plan mutated a `compare_eq_ne` condition in `BoundTarget.minimize`, with
+the same one-worker/disk/time/best-effort limits as Task 1: one killed, zero
+survived. Temporary mutation roots were cleaned.
+
+Task 2 source snapshots (working tree after `7bf03ad`):
+
+| Source | SHA-256 at observation |
+| --- | --- |
+| `adapter.py` | `71b5e60c83767d193c0dfb51a653835f04539a5a566d15abd1df395911d18b06` |
+| `hypothesis_bridge.py` | `ab31411c0308f9c5dc4841e1b46aeefb2671e4101dd0e6abb49edb70f883b3da` |
+| `tests/test_replay.py` | `045a2263c93d47e4a88ff4f5808a145c493a4b2328def1d2145ba1afd07fe43c` |
+
 ## Remaining gates
 
-Stateful extraction, database interoperability, semantic shrinking, per-case
-monitoring, Rust supervision, native crash recovery, OS process limits, and
-coverage-guided discovery remain unverified. No Rust experimental boundary exists
+Per-case monitoring, Rust supervision, native crash recovery, OS process limits,
+and coverage-guided discovery remain unverified. The sampled adapter/shrink
+results above do not close those gates. No Rust experimental boundary exists
 yet, so proptest/cargo-fuzz execution is pending Tasks 4-6, not reported as done.
 Production engine choice and full platform acceptance remain open.
