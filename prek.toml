@@ -1,0 +1,37 @@
+# Keep local Rust checks aligned with CI.
+default_stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt (workspace)"
+language = "system"
+entry = "cargo fmt --all -- --check"
+pass_filenames = false
+files = '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.?rustfmt\.toml$|(^|/)\.?clippy\.toml$|^rust-toolchain(\.toml)?$|^\.cargo/|^prek\.toml$)'
+
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy (workspace)"
+language = "system"
+entry = "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings"
+pass_filenames = false
+files = '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.?rustfmt\.toml$|(^|/)\.?clippy\.toml$|^rust-toolchain(\.toml)?$|^\.cargo/|^prek\.toml$)'
+
+[[repos.hooks]]
+id = "documentation"
+name = "Documentation links and OKF"
+language = "system"
+entry = "uv run --frozen --only-group docs python -m tools.check_docs"
+pass_filenames = false
+files = '(\.md$|^tools/.*\.py$|^tests/.*\.py$|^pyproject\.toml$|^uv\.lock$|^\.python-version$|^mkdocs\.yml$|^prek\.toml$)'
+
+[[repos.hooks]]
+id = "user-docs"
+name = "User documentation (strict build)"
+language = "system"
+entry = "uv run --frozen --only-group docs mkdocs build --strict"
+pass_filenames = false
+files = '(^docs/user/|^mkdocs\.yml$|^pyproject\.toml$|^uv\.lock$|^\.python-version$|^prek\.toml$)'

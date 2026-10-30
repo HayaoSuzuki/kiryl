@@ -1,0 +1,49 @@
+site_name: kiryl
+site_description: User documentation for kiryl
+repo_url: https://github.com/HayaoSuzuki/kiryl
+edit_uri: edit/main/docs/user/
+docs_dir: docs/user
+site_dir: site
+strict: true
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+plugins:
+  - search:
+      lang: en
+markdown_extensions:
+  - fenced_code
+  - tables
+  - toc:
+      permalink: true
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    absolute_links: warn
+    anchors: warn
+nav:
+  - User guide: index.md
