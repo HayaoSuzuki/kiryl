@@ -13,6 +13,8 @@ implementation correctness or human review.
   scaffold, and engine-selection limits.
 - [Fuzzing architecture direction](fuzzing-architecture.md): Selected Rust/Python
   boundary, approved design, and compatibility experiments still required.
+- [Fixture lifecycle audit](fixture-lifecycle-audit.md): Native Python experiment
+  observations, Lean-model correspondence, and remaining limits.
 
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.

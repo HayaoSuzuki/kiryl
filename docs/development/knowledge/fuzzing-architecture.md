@@ -6,12 +6,11 @@ status: draft
 sources:
 - id: proposal
   resource: ../work/coverage-guided-python-fuzzing/design.md
-  working_tree: untracked
-  sha256: 627abc0a07b9ba1f50f030f855726743af1e15c7e8c528892ece7c3fa0324d0c
+  revision: fed3bcaabbc36c2ddee3d2c6c4858ca1803057fd
 - id: plan
   resource: ../work/coverage-guided-python-fuzzing/feasibility-plan.md
-  working_tree: untracked
-  sha256: d64d6e0df93c41f85d9840b4ea98740146bcee273838588e6739dedf5c410340
+  working_tree: modified
+  sha256: f47f0a6ce9444b23087dc9b5c3a307d70321ac64f15b969736b0b667af7af526
 - id: crate
   resource: ../../../src/lib.rs
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
@@ -46,9 +45,11 @@ complex integration.[^proposal]
 
 # Current evidence and unresolved gates
 
-The crate still contains only the development scaffold. Neither the selected
-architecture nor its Python/platform compatibility has been implemented or
-runtime-tested.[^crate]
+The product crate still contains only the development scaffold. The integrated
+Rust/Python architecture and full platform matrix have not been runtime-tested.
+The isolated Python experiment now has limited evidence described in the
+[fixture lifecycle audit](fixture-lifecycle-audit.md); that does not establish
+the whole product's compatibility.[^crate]
 
 The first-version acceptance targets include all three operating systems and
 both specified CPython versions, fixtures/parametrization/stateful testing,
@@ -61,7 +62,8 @@ to declare any gate passed.[^proposal]
 The [feasibility implementation plan](../work/coverage-guided-python-fuzzing/feasibility-plan.md)
 orders six experiment tasks: pytest binding, stateful replay/shrinking, isolated
 branch feedback, Rust supervision and artifacts, OS resource capabilities, and
-guided-search/platform evidence. The plan remains pending execution review;
+guided-search/platform evidence. The maintainer selected inline execution with
+five self-reviews per task, Lean, property/fuzz testing, and strict Python checks;
 writing it does not adopt a production engine or complete product acceptance.
 Dependent product campaign/CLI work follows the evidence gate.[^plan]
 

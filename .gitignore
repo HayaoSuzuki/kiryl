@@ -29,6 +29,7 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 .ruff_cache/
+.lake/
 
 # Generated user documentation
 /site/

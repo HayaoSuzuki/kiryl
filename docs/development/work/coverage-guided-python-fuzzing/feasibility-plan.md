@@ -47,6 +47,41 @@ claim. Resolve transitive dependencies into an experiment-specific lockfile.
 
 ## Scope and stopping rule
 
+### Execution method and additional verification requirements
+
+The maintainer selected inline execution on 2026-10-31: one implementer runs the
+tasks in this session, with a fresh whole-branch reviewer at the end. The design
+and plan were committed first as `fed3bca` before implementation work.
+
+Every task must record at least five distinct self-review passes: (1) approved
+contract and scope, (2) boundary/error behavior, (3) state/side effects and
+concurrency, (4) property/fuzz coverage and test sensitivity, and (5) module
+boundaries, source confidentiality, and evidence accuracy. Record findings,
+repairs, and exact verification results; five repetitions of one test command
+do not constitute five reviews. Review records belong in the feasibility results
+when substantive evidence exists, with temporary task notes in the plan ledger.
+
+Actively use a small pinned Lean model for pure state/budget/artifact invariants
+introduced by the Rust controller; export model expectations and check same-premise
+implementation correspondence separately. Keep mathematical claims restricted to
+the model. Bound Lean runs externally (initially 20 seconds) and use local
+heartbeat limits; no unbounded exhaustive search or `sorry` proofs.
+
+Add `proptest` behavioral properties and run `cargo-fuzz` against the Rust
+protocol/state boundary when it exists (Tasks 4-6). Keep these dependencies and
+fuzz targets experimental. Run finite fuzz campaigns, retain minimized regressions,
+and report actual run counts/time/toolchains. Python-stage randomized checks use
+Hypothesis. A not-yet-existing Rust boundary is not reported as fuzz-tested.
+
+Use `gh` for all GitHub access. Do not push, merge, publish, or modify repository
+settings as part of inline execution.
+
+Python changes use Ruff 0.17.3 (all lint rules enabled, narrow documented
+exceptions, formatting checked) and ty 0.0.95 (all diagnostics at error severity,
+warnings fatal). Pin them in the experiment lockfile. Run `ruff check`,
+`ruff format --check`, and `ty check` for each stage with Python changes; do not
+exclude the experiment from these checks or blanket-disable annotation rules.
+
 This is the executable plan for the design's feasibility phase, not a claim that
 the complete first-version CLI can already be planned against proven APIs.
 Work through Tasks 1-6 in dependency order. A failed integration gate produces a

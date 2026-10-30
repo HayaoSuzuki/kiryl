@@ -1,0 +1,10 @@
+name = "fuzzing-oracle"
+version = "0.0.0"
+defaultTargets = ["ScopeModel", "scope-oracle"]
+
+[[lean_lib]]
+name = "ScopeModel"
+
+[[lean_exe]]
+name = "scope-oracle"
+root = "ScopeOracle"
