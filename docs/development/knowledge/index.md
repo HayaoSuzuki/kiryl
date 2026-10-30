@@ -11,6 +11,8 @@ implementation correctness or human review.
   canonical topics, and evidence without duplicated current explanations.
 - [Project baseline](project-baseline.md): Rust and licensing choices, current
   scaffold, and engine-selection limits.
+- [Fuzzing architecture direction](fuzzing-architecture.md): Selected Rust/Python
+  boundary, approved design, and compatibility experiments still required.
 
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.
