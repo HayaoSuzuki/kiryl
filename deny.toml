@@ -1,0 +1,28 @@
+# cargo-audit owns vulnerability checks. Check every platform's dependencies.
+[licenses]
+include-dev = true
+include-build = true
+confidence-threshold = 0.95
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+# The scaffold has no third-party dependencies yet.
+unused-allowed-license = "allow"
+unused-license-exception = "deny"
+
+# ELv2 applies to kiryl itself, rather than all third-party dependencies.
+[[licenses.exceptions]]
+name = "kiryl"
+version = "=0.1.0"
+allow = ["Elastic-2.0"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+unused-allowed-source = "allow"
