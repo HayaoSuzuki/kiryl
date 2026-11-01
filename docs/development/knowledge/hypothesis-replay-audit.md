@@ -10,6 +10,10 @@ sources:
 - id: bridge
   resource: ../../../experiments/python-fuzzing/hypothesis_bridge.py
   revision: a36750985a30bee80e1920dfe3279f06fae45bac
+- id: corrections
+  resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
+  working_tree: modified
+  sha256: 7ac51175b4bffb69cfcfe141a31297a76cb89197d4929bcf580d1706e91df2cf
 ---
 # Observed contract slice
 
@@ -30,6 +34,12 @@ than its last attempted failure. Changed failure identity cannot become the
 minimization target. Successful replay of an earlier failure is unstable rather
 than confirmed.[^bridge][^results]
 
+
+The subsequent whole-branch review corrected generated-input raw replay,
+post-setup case timing and explicit skip propagation. These corrections and
+regression observations supersede the earlier implementation on those points;
+original comparison snapshots retain their historical scope.[^corrections]
+
 # Limits and recheck conditions
 
 These are sampled integration results. They do not prove arbitrary custom
@@ -42,3 +52,5 @@ identity, candidate encoding, or budget/verification rules change.[^bridge][^res
 
 [^results]: [Feasibility observations, five review passes, and source snapshots](../work/coverage-guided-python-fuzzing/feasibility-results.md).
 [^bridge]: [Exact-version Hypothesis integration](../../../experiments/python-fuzzing/hypothesis_bridge.py).
+
+[^corrections]: [Whole-branch review corrections](../work/coverage-guided-python-fuzzing/feasibility-results.md).

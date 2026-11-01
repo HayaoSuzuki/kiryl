@@ -7,23 +7,20 @@ sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
   working_tree: modified
-  sha256: 366ee328f903b7a0a49c7af3f69aeaf1df56539c2a899f31244ecd4871428bac
+  sha256: 7ac51175b4bffb69cfcfe141a31297a76cb89197d4929bcf580d1706e91df2cf
 - id: search
   resource: ../../../experiments/python-fuzzing/src/search.rs
-  working_tree: untracked
-  sha256: a5746c77acfc291411324d20efa10cd0205e992b2b11e85a6ad2712eec22f3e2
+  revision: bda21333dcef690dc53df8d318763eeb9bd5c78c
 - id: evidence
   resource: ../../../experiments/python-fuzzing/evidence.py
-  working_tree: untracked
-  sha256: 84128ceafe6b097a71e3c2172f7711c8ea592bd3f833d670a17f99ab6ca9e51d
+  working_tree: modified
+  sha256: e586e11c46c2d46f5e23e6898e5204f9e5d60029a81249fee08cfbf103034084
 - id: sample314
   resource: ../work/coverage-guided-python-fuzzing/evidence/macos-python314.json
-  working_tree: untracked
-  sha256: a4ffc5d44f91c54a5fee299717321f5ab7344b7166d8862596e960e1e840a05a
+  revision: bda21333dcef690dc53df8d318763eeb9bd5c78c
 - id: sample315
   resource: ../work/coverage-guided-python-fuzzing/evidence/macos-python315.json
-  working_tree: untracked
-  sha256: 321f11a309121b795aced57fa3b335ed3e911a4ef78f4f8b191e2d5a6c24e78b
+  revision: bda21333dcef690dc53df8d318763eeb9bd5c78c
 ---
 # Observed discovery
 
@@ -45,8 +42,9 @@ none proves the whole implementation.[^search][^results]
 
 Every comparison starts with separate fresh database/corpus parents. Evidence
 validation checks native OS/minor provenance, source/report hashes, measurement
-mode, seed, storage separation, complete probe categories and matching JUnit
-interpreter metadata. It rejects unrun platform completion claims. Structural
+mode, seed, storage separation, complete probe categories, matching JUnit
+interpreter metadata and agreement between declared probe statuses and every
+required testcase outcome. Missing/skipped cases remain unverified. It rejects unrun platform completion claims. Structural
 integrity is distinct from factual review. Compact summaries retain observed
 metrics/hashes; raw replay bundles are local generated output or seven-day CI
 artifacts. Attempt counts have different measurement scopes across modes.[^evidence][^results]
@@ -54,7 +52,7 @@ artifacts. Attempt counts have different measurement scopes across modes.[^evide
 # Decision and limits
 
 Continue architecture A's native experiments; keep production engine adoption
-open. Local fallback behavior and 68 passing tests per interpreter do not establish
+open. Local fallback behavior and the passing regression suites do not establish
 hard memory enforcement or native Linux/Windows support. Cross-target checks and
 a defined workflow are not native execution. Full campaign/CLI scope remains the
 plan's dependent follow-on. Reconsider after actual native probes, strategy/pin,

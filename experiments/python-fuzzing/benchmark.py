@@ -9,12 +9,11 @@ import platform
 import shutil
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from importlib.metadata import version
 from pathlib import Path
 from typing import cast
 
-from evidence import BUDGET_SECONDS, validate
+from evidence import BUDGET_SECONDS, probe_results, validate
 
 ROOT = Path(__file__).resolve().parent
 INFRASTRUCTURE_EXIT = 2
@@ -45,57 +44,10 @@ SOURCES = (
     "specimens/discovery.py",
     "specimens/test_discovery.py",
 )
-PROBE_TESTS = {
-    "fixtures": {"test_real_fixture_returns_match_lean_generated_counts"},
-    "stateful": {"test_stateful_semantic_shrinking"},
-    "replay": {
-        "test_ordinary_pytest_reuses_database",
-        "test_measured_ordinary_path_reuses_original_database",
-    },
-    "crash": {"test_crash_retains_exact_original_and_continues"},
-    "logs": {
-        "test_output_is_bounded_and_control_survives",
-        "test_flood_remains_bounded_when_killed",
-    },
-    "monitoring": {
-        "test_other_tools_keep_disabled_events",
-        "test_feature_ids_match_an_independent_interpreter",
-    },
-    "hard_memory": {
-        "test_combined_memory_requires_backend_evidence",
-        "test_setup_memory_limit_is_infrastructure",
-        "test_two_trees_have_independent_allowances",
-    },
-}
 
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def probe_results(path: Path | None) -> dict[str, str]:
-    """Extract only observed pytest outcomes; missing/skipped tests stay unverified."""
-    statuses = dict.fromkeys(PROBE_TESTS, "unverified")
-    if path is None:
-        return statuses
-    tree = ET.parse(path)  # noqa: S314 -- locally generated, owned pytest JUnit file
-    observed: dict[str, list[str]] = {}
-    for case in tree.iter("testcase"):
-        name = case.get("name", "").split("[", 1)[0]
-        status = (
-            "failed"
-            if case.find("failure") is not None or case.find("error") is not None
-            else "unverified"
-            if case.find("skipped") is not None
-            else "passed"
-        )
-        observed.setdefault(name, []).append(status)
-    for category, names in PROBE_TESTS.items():
-        values = [state for name in names for state in observed.get(name, ["unverified"])]
-        statuses[category] = (
-            "failed" if "failed" in values else "unverified" if "unverified" in values else "passed"
-        )
-    return statuses
 
 
 def _versions() -> dict[str, str]:

@@ -25,6 +25,7 @@ from hypothesis.core import (
     failure_exceptions_to_catch,
     get_random_for_wrapped_test,
     process_arguments_to_given,
+    skip_exceptions_to_reraise,
 )
 from hypothesis.database import choices_from_bytes, choices_to_bytes
 from hypothesis.errors import FailedHealthCheck, InvalidArgument, UnsatisfiedAssumption
@@ -190,6 +191,8 @@ class BoundTarget:
                     else None
                 ),
             )
+        except skip_exceptions_to_reraise():
+            return Evaluation("skip")
         except StopTest, UnsatisfiedAssumption:
             return Evaluation("reject")
         except InvalidArgument, FailedHealthCheck:
@@ -365,6 +368,9 @@ def _measure_handle(
         outcome = Evaluation("pass")
         try:
             return original(*args, **kwargs)
+        except skip_exceptions_to_reraise():
+            outcome = Evaluation("skip")
+            raise
         except StopTest, UnsatisfiedAssumption:
             outcome = Evaluation("reject")
             raise

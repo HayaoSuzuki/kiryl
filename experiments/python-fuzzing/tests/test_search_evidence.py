@@ -4,7 +4,10 @@
 import hashlib
 import json
 import sys
+import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, cast
+
+import pytest
 
 from evidence import validate
 
@@ -119,3 +122,40 @@ def test_report_tampering_and_missing_probe_category_rejected(tmp_path: Path) ->
     del probes["crash"]
     path.write_text(json.dumps(record))
     assert validate(path)
+
+
+@pytest.mark.parametrize("contradiction", ["skipped", "failure", "missing"])
+def test_probe_declarations_must_match_junit(tmp_path: Path, contradiction: str) -> None:
+    """A valid hash cannot promote failed, skipped or absent testcases to passed."""
+    from evidence import PROBE_TESTS  # noqa: PLC0415 -- shared extraction contract
+
+    path, record = _record(tmp_path)
+    root = ET.Element("testsuites")
+    suite = ET.SubElement(root, "testsuite")
+    properties = ET.SubElement(suite, "properties")
+    environment = cast("dict[str, object]", record["environment"])
+    for key, value in {
+        "platform": environment["platform"],
+        "python": ".".join(map(str, cast("list[int]", environment["python"]))),
+        "implementation": environment["implementation"],
+    }.items():
+        ET.SubElement(properties, "property", name=f"kiryl.{key}", value=str(value))
+    for name in sorted({name for names in PROBE_TESTS.values() for name in names}):
+        case = ET.SubElement(suite, "testcase", name=name)
+        if name == "test_combined_memory_requires_backend_evidence":
+            if contradiction == "missing":
+                suite.remove(case)
+            else:
+                ET.SubElement(case, contradiction)
+    xml = tmp_path / "probes.xml"
+    ET.ElementTree(root).write(xml)
+    record["probe_source"] = {
+        "path": xml.name,
+        "sha256": hashlib.sha256(xml.read_bytes()).hexdigest(),
+    }
+    record["probes"] = dict.fromkeys(PROBE_TESTS, "passed")
+    record["completed_cells"] = [
+        f"{sys.platform}-{sys.version_info.major}.{sys.version_info.minor}"
+    ]
+    path.write_text(json.dumps(record))
+    assert "probe declarations contradict JUnit outcomes" in validate(path)

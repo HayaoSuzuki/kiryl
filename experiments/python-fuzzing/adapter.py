@@ -139,6 +139,7 @@ class _Session:
                 fixtureinfo=original._fixtureinfo,  # noqa: SLF001 -- resolved parameter fixtures
                 originalname=original.originalname,
             )
+            clone.own_markers = list(original.own_markers)
             clone.owner = self
             clone.invocation = invocation
             scheduled.append(clone)
@@ -171,6 +172,8 @@ class _Session:
                 setattr(case, method, previous)
             else:
                 delattr(case, method)
+        if result.skipped:
+            pytest.skip(result.skipped[0][1])
         if not result.wasSuccessful():
             message = f"unittest lifecycle failed: {result.errors!r} {result.failures!r}"
             raise RuntimeError(message)
@@ -212,13 +215,18 @@ class _Session:
                     self.evidence.cases.append(case)
                 if self.driver:
                     self.driver.observe(case)
-                if case.kind == "failure":
+                if case.kind in {"failure", "skip"}:
                     return
         finally:
             if monitor:
                 monitor.close()
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.skipped:
+            case = CaseResult(report.nodeid, "skip")
+            self.evidence.cases.append(case)
+            if self.driver:
+                self.driver.observe(case)
         if report.failed:
             self.evidence.cases.append(
                 CaseResult(report.nodeid, "infrastructure", rendered=str(report.longrepr)[-4096:])
@@ -250,7 +258,7 @@ def _in_context(
     pytest.main(pytest_args, plugins=[plugin])
     if plugin.error:
         raise plugin.error
-    if plugin.evidence.cases:
+    if any(case.kind != "skip" for case in plugin.evidence.cases):
         message = plugin.evidence.cases[0].rendered or "operation infrastructure failure"
         raise RuntimeError(message)
     return plugin.evidence
@@ -294,20 +302,30 @@ def minimize(
         nonlocal result
         result = bind_target(item).minimize(token, budget_seconds, before_case)
 
-    _in_context(nodeid, value["pytest_args"], operation)
+    evidence = _in_context(nodeid, value["pytest_args"], operation)
+    if result is None and any(case.kind == "skip" for case in evidence.cases):
+        pytest.skip("minimization invocation skipped")
     if result is None:
         message = "minimization did not execute a target"
         raise RuntimeError(message)
     return result
 
 
-def run_token(nodeid: str, token: bytes, pytest_args: list[str]) -> CaseResult:
+def run_token(
+    nodeid: str,
+    token: bytes,
+    pytest_args: list[str],
+    before_case: Callable[[], None] | None = None,
+) -> CaseResult:
     """Evaluate an opaque replay token inside this worker's fresh pytest context."""
     result = None
 
     def operation(item: pytest.Function) -> None:
         nonlocal result
-        evaluated = bind_target(item).check_token(token)
+        target = bind_target(item)
+        if before_case:
+            before_case()
+        evaluated = target.check_token(token)
         expected = unpack_token(token).get("fingerprint")
         status = (
             "confirmed"
@@ -316,7 +334,9 @@ def run_token(nodeid: str, token: bytes, pytest_args: list[str]) -> CaseResult:
         )
         result = CaseResult(item.nodeid, **vars(evaluated), verification=status)
 
-    _in_context(nodeid, pytest_args, operation)
+    evidence = _in_context(nodeid, pytest_args, operation)
+    if result is None and any(case.kind == "skip" for case in evidence.cases):
+        return CaseResult(nodeid, "skip", verification="unstable")
     if result is None:
         message = "replay did not execute a target"
         raise RuntimeError(message)
@@ -352,6 +372,10 @@ class _OrdinarySession:
     def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
         self.items = items
         self.excluded = tuple(item.path for item in items)
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.skipped and report.when == "setup":
+            self.after(CaseResult(report.nodeid, "skip"))
 
     @pytest.hookimpl(wrapper=True, trylast=True)
     def pytest_runtest_call(self, item: pytest.Item) -> Generator[None]:

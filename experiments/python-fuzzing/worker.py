@@ -54,7 +54,11 @@ class Driver:
         """Wait until the parent has saved any original before continuing."""
         send(
             self.control,
-            {"kind": "result", "case_id": self.case_id, "observation": _observation(result)},
+            {
+                "kind": "skipped" if result.kind == "skip" else "result",
+                "case_id": self.case_id,
+                "observation": _observation(result),
+            },
         )
         if receive(sys.stdin.buffer)["kind"] != "ack":
             message = "missing finding acknowledgment"
@@ -100,9 +104,8 @@ def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
     return control, request
 
 
-def main() -> None:
-    """Dispatch an attached worker operation without exposing target stdout."""
-    control, request = _bootstrap()
+def _dispatch(control: BinaryIO, request: dict[str, object]) -> None:
+    """Run one attached operation."""
     from adapter import Invocation, minimize, run_ordinary, run_session, run_token  # noqa: PLC0415 -- after attachment
 
     nodeid = cast("str", request["test_id"])
@@ -119,7 +122,14 @@ def main() -> None:
         send(control, {"kind": "baseline_done", "exit_code": code, "statistics": statistics})
     elif mode == "replay":
         token = bytes(cast("list[int]", request["token"]))
-        driver.observe(run_token(nodeid, token, args))
+
+        def before_replay() -> None:
+            send(control, {"kind": "replay_case", "test_id": nodeid})
+            if receive(sys.stdin.buffer)["kind"] != "ack":
+                message = "missing replay-case acknowledgment"
+                raise ValueError(message)
+
+        driver.observe(run_token(nodeid, token, args, before_replay))
     elif mode == "minimize":
         token = bytes(cast("list[int]", request["token"]))
 
@@ -135,6 +145,20 @@ def main() -> None:
         message = "unknown worker mode"
         raise ValueError(message)
     send(control, {"kind": "done"})
+
+
+def main() -> None:
+    """Dispatch an attached worker operation without exposing target stdout."""
+    control, request = _bootstrap()
+    from hypothesis.core import skip_exceptions_to_reraise  # noqa: PLC0415 -- after attachment
+
+    from adapter import CaseResult  # noqa: PLC0415 -- after attachment
+
+    try:
+        _dispatch(control, request)
+    except skip_exceptions_to_reraise():
+        Driver(control).observe(CaseResult(cast("str", request["test_id"]), "skip"))
+        send(control, {"kind": "done"})
 
 
 if __name__ == "__main__":

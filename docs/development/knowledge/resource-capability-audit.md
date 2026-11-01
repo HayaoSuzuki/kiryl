@@ -13,6 +13,9 @@ sources:
 - id: msvc
   resource: https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort
   accessed: '2026-11-01'
+- id: jobs
+  resource: https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+  accessed: '2026-11-01'
 ---
 # Capability contract and observations
 
@@ -38,6 +41,11 @@ can then yield exit3, which remains an ambiguous candidate alongside exception
 statuses. Explicit exit(3) has the same observable status. Fresh reproduction
 confirms the abnormal outcome rather than its native cause.[^results][^msvc]
 
+The Windows backend currently relies on job-memory completion notifications.
+Their delivery is not guaranteed; absence is not evidence that no limit event
+occurred. Complete OOM classification remains open until native probes and
+notification-limit/violation-query handling resolve that gap.[^jobs]
+
 Product import policy, resource backends and compatibility remain open. The probe
 ignores PYTHONPATH/user-site startup configuration; it does not establish hostile
 process containment. Reconsider after native runs, namespace/delegation changes,
@@ -46,3 +54,5 @@ Windows assignment/notification changes, or any altered startup sequence.[^resul
 [^results]: [Observed commands, five reviews, provenance and open gates](../work/coverage-guided-python-fuzzing/feasibility-results.md).
 [^resource]: [Resource/guard owner](../../../experiments/python-fuzzing/src/resource/mod.rs).
 [^msvc]: [Microsoft CRT abort behavior](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort).
+
+[^jobs]: [Microsoft Job Objects notification guarantees](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).

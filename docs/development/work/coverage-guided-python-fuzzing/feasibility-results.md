@@ -498,3 +498,69 @@ gates are real Linux/Windows behavioral runs, hard-memory/setup/concurrent-allow
 probes in capable environments, and campaign/CLI design against those observations.
 An unavailable delegated cgroup is not a passing hard-enforcement result. These
 limitations do not remove required stateful, fixture or platform scope.
+
+
+## Whole-branch review corrections
+
+A fresh read-only review of `5c4eccb..bda2133` found four important mismatches
+between the intended behavior and implementation. Each was reproduced before
+its correction. These changes are subsequent to the recorded comparison source
+snapshots; the 60 comparison observations above remain evidence for those
+snapshots, rather than measurements of the corrected revision.
+
+- Generated native-crash/timeout verification incorrectly indexed the configured
+  input schedule. Raw replay now receives the retained active bytes, independently
+  of that schedule. Guided and unguided tests cover empty/unrelated schedules,
+  immediate failure and failure after several mutations; derived evidence records
+  the exact replay input alongside the immutable original.
+- Replay and minimization started the case clock before pytest setup. Replay now
+  acknowledges an explicit post-setup execution boundary; shrinking starts with
+  the first actual candidate acknowledgment. A 300 ms fixture with a 150 ms case
+  limit reaches the fast failing oracle, confirms it, shrinks and tears down.
+  Campaign time continues to include setup; genuine hanging cases still time out.
+- `unittest.SkipTest` became a finding while pytest skips could disappear or count
+  as useful passing coverage. Both families now produce explicit skip outcomes;
+  markers and setup skips survive invocation cloning. Ordinary Hypothesis still
+  reraises skips to pytest. Skip outcomes do not create originals, add coverage
+  novelty or count as useful passes. Changed circumstances that skip fresh replay
+  cannot confirm an earlier failure. Completion with an active case is a protocol
+  error, with the active raw bytes retained.
+- A hashed JUnit file could contradict its declared probe results. Extraction and
+  validation now share the same required testcase/category rules. Every declared
+  status is reconciled with the referenced XML; missing/skipped cases remain
+  unverified, and failures/errors fail their category. All ten historical raw
+  records still validate with this stricter check.
+
+Five author checks covered contract/lineage, post-setup budget boundaries,
+skip propagation across both Python paths, protocol completion/correlation, and
+JUnit provenance versus actual outcomes. The fresh review does not establish
+native Linux/Windows behavior, production scheduling/packaging or general search
+effectiveness. Full local regression suites passed 109 tests with three hard-backend skips
+on each native macOS interpreter (CPython 3.14.9 and 3.15.2). Rust passed all
+14 tests, including proptest and generated Lean correspondences. The four Lean
+models rebuilt under 20-second limits and all four generated corpora matched.
+Ruff ALL, Ruff format, ty all-error, native and Linux/Windows cross-target Clippy
+passed; root documentation tests passed 28 cases, and OKF/link/strict-site checks
+passed. No second reviewer pass is used in place of regression tests.
+
+Windows OOM classification remains incomplete: the backend currently relies on
+`JOB_OBJECT_MSG_JOB_MEMORY_LIMIT`. Microsoft documents that completion-port
+notifications other than notification-limit messages are not guaranteed. Missing
+notification therefore cannot establish that no memory-limit event occurred.
+Notification-limit/violation-query support is deferred pending native validation;
+no complete Windows classification claim follows from this prototype.
+See [Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+Correction source snapshots (working tree after `bda2133`):
+
+| Source | SHA-256 |
+| --- | --- |
+| `adapter.py` | `813f6c1aca0c86658eb043f52f17b7827ca04992ceaa71be0e7e99bbf143af48` |
+| `hypothesis_bridge.py` | `f9e24f48dbc0a580ef67bf5ddbf2efceff31a1cd374f39423a7b8cb7b866ca14` |
+| `worker.py` | `c1036894638b145ea7d58af92f45fb74b06e83cf782f7f72920058a803331293` |
+| `evidence.py` | `e586e11c46c2d46f5e23e6898e5204f9e5d60029a81249fee08cfbf103034084` |
+| `benchmark.py` | `b31e576363931cfcb3705676a2bc0d0b5c9db987573292a2a18b70db85dc29b0` |
+| `src/controller.rs` | `7573d339d18925a853b3d43746d7777253218a8d8bdcc404f9893a17185f827e` |
+| `tests/test_controller.py` | `1547fa546ea310a7a001716122def8468e31babf0b0c31a9bf83d9830aa9c515` |
+| `tests/test_skips.py` | `2695c272c33ebf257f9ef30a05b2c161d74f5efd00ee40ca0f66992953a2defb` |
+| `tests/test_search_evidence.py` | `2f9b137dbfcca0028aaf7408c1b15ec3e9082278f1fd2860e1dfa75aed3a8458` |

@@ -151,7 +151,7 @@ impl ProbeReport {
             i32::from(
                 self.outcomes
                     .iter()
-                    .any(|o| o.kind != "pass" && o.kind != "reject"),
+                    .any(|o| !["pass", "reject", "skip"].contains(&o.kind.as_str())),
             )
         }
     }
@@ -317,6 +317,7 @@ struct RunResult {
     observation: Option<Observation>,
     original: Option<String>,
     consumed: usize,
+    retained_input: Option<Vec<u8>>,
     derived: Vec<Value>,
 }
 
@@ -469,10 +470,14 @@ impl Controller {
                         && let Some(original) = &result.original
                         && !self.cancelled(&config, start)
                     {
+                        let replay_invocation = Invocation {
+                            test_id: invocation.test_id.clone(),
+                            inputs: result.retained_input.clone().into_iter().collect(),
+                        };
                         let verification = self.session(
                             &config,
-                            invocation,
-                            offset.saturating_sub(1),
+                            &replay_invocation,
+                            0,
                             "raw_replay",
                             None,
                             start,
@@ -494,7 +499,7 @@ impl Controller {
                             "unstable"
                         };
                         report.outcomes[index].verification = status.into();
-                        let evidence = json!({"mode": "raw_replay", "verification": status, "observation": verification.observation});
+                        let evidence = json!({"mode": "raw_replay", "input": result.retained_input, "verification": status, "observation": verification.observation});
                         report.outcomes[index].derived.push(
                             store
                                 .derived(original, &evidence)
@@ -560,6 +565,7 @@ impl Controller {
                     observation: Some(observation),
                     original: None,
                     consumed: 0,
+                    retained_input: None,
                     derived: vec![],
                 });
             }
@@ -646,13 +652,6 @@ impl Controller {
                             );
                             worker.enqueue(json!({"kind": "start", "pytest_args": config.pytest_args, "test_id": invocation.test_id,
                                 "mode": if mode == "raw_replay" { "run" } else { mode }, "token": token, "budget_seconds": budget}));
-                            if !["run", "raw_replay", "baseline"].contains(&mode) {
-                                active = Some((
-                                    0,
-                                    invocation.inputs.first().cloned().unwrap_or_default(),
-                                    Instant::now(),
-                                ));
-                            }
                         }
                         "next"
                             if ready
@@ -686,6 +685,14 @@ impl Controller {
                                     json!({"kind": "case", "case_id": id, "input": input}),
                                 );
                             }
+                        }
+                        "replay_case" if ready && mode == "replay" && active.is_none() => {
+                            if message["test_id"].as_str() != Some(&invocation.test_id) {
+                                observed = Some(infrastructure("replay test ID mismatch"));
+                                break;
+                            }
+                            active = Some((0, token.cloned().unwrap_or_default(), Instant::now()));
+                            worker.enqueue(json!({"kind": "ack"}));
                         }
                         "baseline_case" if ready && mode == "baseline" && active.is_none() => {
                             if message["test_id"].as_str() != Some(&invocation.test_id)
@@ -723,6 +730,35 @@ impl Controller {
                                     detail: None,
                                 });
                             }
+                        }
+                        "skipped" if ready => {
+                            if message["observation"]["nodeid"].as_str()
+                                != Some(&invocation.test_id)
+                                || active.as_ref().is_some_and(|(id, _, _)| {
+                                    message["case_id"].as_u64() != Some(*id)
+                                })
+                            {
+                                observed = Some(infrastructure("skip correlation mismatch"));
+                                break;
+                            }
+                            active = None;
+                            observed = Some(Observation {
+                                kind: "skip".into(),
+                                verification: "unstable".into(),
+                                ..Observation::default()
+                            });
+                            if ["run", "baseline"].contains(&mode) {
+                                report.outcomes.push(Outcome {
+                                    test_id: invocation.test_id.clone(),
+                                    case_id: 0,
+                                    kind: "skip".into(),
+                                    original: None,
+                                    derived: vec![],
+                                    verification: "pending".into(),
+                                    detail: None,
+                                });
+                            }
+                            worker.enqueue(json!({"kind": "ack"}));
                         }
                         "result" if ready && mode != "minimize" => {
                             let Some((id, input, case_start)) = active.as_ref() else {
@@ -813,6 +849,9 @@ impl Controller {
                             active = None;
                         }
                         "done" if ready => {
+                            if active.is_some() {
+                                observed = Some(infrastructure("done with an active case"));
+                            }
                             break;
                         }
                         "error" => {
@@ -875,6 +914,7 @@ impl Controller {
                 Err(mpsc::RecvTimeoutError::Timeout) => (),
             }
         }
+        let retained_input = active.as_ref().map(|(_, input, _)| input.clone());
         worker.terminate();
         let log = worker.take_log();
         if report.logs.is_empty() {
@@ -890,7 +930,7 @@ impl Controller {
             aggregate.truncated = observed > aggregate.tail.len() as u64;
         }
         if let Some(value) = &observed {
-            let failure = !(["pass", "reject", "failure"].contains(&value.kind.as_str())
+            let failure = !(["pass", "reject", "skip", "failure"].contains(&value.kind.as_str())
                 || value.kind == "oom" && original.is_some());
             if mode == "minimize"
                 && let Some((_, candidate, _)) = &active
@@ -944,6 +984,7 @@ impl Controller {
             observation: observed,
             original,
             consumed,
+            retained_input,
             derived,
         })
     }

@@ -10,6 +10,10 @@ sources:
 - id: controller
   resource: ../../../experiments/python-fuzzing/src/controller.rs
   revision: 962198c
+- id: corrections
+  resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
+  working_tree: modified
+  sha256: 7ac51175b4bffb69cfcfe141a31297a76cb89197d4929bcf580d1706e91df2cf
 ---
 # Observed behavior
 
@@ -38,5 +42,13 @@ scheduling, discovery effectiveness, or native Windows/Linux support. Recheck wh
 transport, budget boundaries, persistence, process lifetime or the bridge changes.
 Resource control and streaming search require their own subsequent evidence.[^results]
 
+
+The subsequent whole-branch review corrected generated-input raw replay,
+post-setup case timing and explicit skip propagation. These corrections and
+regression observations supersede the earlier implementation on those points;
+original comparison snapshots retain their historical scope.[^corrections]
+
 [^results]: [Observed commands, five reviews, exact snapshots and limits](../work/coverage-guided-python-fuzzing/feasibility-results.md).
 [^controller]: [Experimental supervision owner](../../../experiments/python-fuzzing/src/controller.rs).
+
+[^corrections]: [Whole-branch review corrections](../work/coverage-guided-python-fuzzing/feasibility-results.md).
