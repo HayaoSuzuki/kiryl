@@ -1,6 +1,6 @@
 name = "fuzzing-oracle"
 version = "0.0.0"
-defaultTargets = ["ScopeModel", "scope-oracle"]
+defaultTargets = ["ScopeModel", "scope-oracle", "BudgetModel", "budget-oracle"]
 
 [[lean_lib]]
 name = "ScopeModel"
@@ -8,3 +8,10 @@ name = "ScopeModel"
 [[lean_exe]]
 name = "scope-oracle"
 root = "ScopeOracle"
+
+[[lean_lib]]
+name = "BudgetModel"
+
+[[lean_exe]]
+name = "budget-oracle"
+root = "BudgetOracle"

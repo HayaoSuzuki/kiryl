@@ -33,3 +33,8 @@ __pycache__/
 
 # Generated user documentation
 /site/
+
+# Generated libFuzzer corpora and crash artifacts (curate regressions as tests)
+experiments/python-fuzzing/fuzz/corpus/
+experiments/python-fuzzing/fuzz/artifacts/
+experiments/python-fuzzing/fuzz/coverage/

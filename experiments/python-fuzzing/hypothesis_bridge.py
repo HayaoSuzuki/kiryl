@@ -20,6 +20,7 @@ from hypothesis import settings
 from hypothesis.core import (
     HypothesisHandle,
     StateForActualGivenExecution,
+    failure_exceptions_to_catch,
     get_random_for_wrapped_test,
     process_arguments_to_given,
 )
@@ -187,7 +188,7 @@ class BoundTarget:
             )
         except StopTest, UnsatisfiedAssumption:
             return Evaluation("reject")
-        except Exception as error:  # noqa: BLE001 -- the test oracle reports unhandled exceptions
+        except failure_exceptions_to_catch() as error:
             origin = InterestingOrigin.from_exception(error)
             frames = traceback.extract_tb(error.__traceback__)
             location = frames[-1] if frames else None

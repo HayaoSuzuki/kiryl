@@ -208,10 +208,99 @@ Task 3 source snapshots (working tree after `a367509`):
 | `tests/test_monitor.py` | `6b9efe9775d7216479feb4f215e17d9bd92a0f27ab42f11f005e9236393a0211` |
 | `measure_monitor.py` | `6d47a2efd2820b4ea8734deeea22fbebce0b7f6baadad861c93493f83392f012` |
 
+## Task 4: Rust supervision and input ownership
+
+Native macOS arm64 CPython 3.14.9 and 3.15.2 each passed 48 experiment tests.
+The standalone Rust suite passed eight tests, including proptest. Ruff ALL,
+formatting, ty all-error, Rust formatting/Clippy with warnings denied, and
+cargo-deny 0.20.2 license/source checks passed. Dependencies belong only to the
+unpublished experimental workspace; the product crate remains the scaffold.
+
+The real parent retained exact raw bytes through `os.abort`, verified a native
+crash in another interpreter, and continued an independent test. Assertions and
+`pytest.fail` are verified using opaque bridge tokens in fresh workers. Semantic
+minimization acknowledges each candidate before execution; an abort during that
+phase retains both the immutable raw original and the active opaque token in a
+separate lineage record. Returned best tokens remain pending fresh verification;
+the probe does not assert they were verified merely because shrinking returned.
+
+FD-level stdout joins stderr as binary logs while a reserved, noninheritable
+stream carries bounded length-prefixed JSON. A binary flood exceeding 500 KiB
+retained at most 1,024 bytes in the configured tail without breaking control.
+All logs are drained concurrently. A malformed control frame is infrastructure.
+Closing the control descriptor while the process remains alive initially blocked
+the supervisor and mislabeled the subsequent exit; a failing regression led to
+bounded `try_wait` supervision. Normal signal/exception exits are crash candidates;
+arbitrary positive exit statuses and transport failures are infrastructure.
+
+Case timeout, whole-campaign cancellation, and orderly interruption are distinct.
+Campaign expiry wins simultaneous case expiry; Ctrl-C returns 130 with a report.
+The total budget includes setup/replay/minimization. Slices start after setup and
+finish active examples cooperatively; a short slice initially starved before its
+first input and was corrected. Two finite slow cases finish and run teardown in
+separate worker invocations. Forced termination does not promise Python teardown.
+An exhausted verification budget leaves the stored original pending.
+
+| Self-review | Finding/action and evidence |
+| --- | --- |
+| 1: contract | Real crash, independent continuation, FD flood, fixture error, assertion/native fresh replay; pytest.fail initially misclassified because it inherits BaseException, then regression RED to GREEN using the pinned Hypothesis failure policy |
+| 2: boundaries | Fixed setup-starved slices and blocking wait after control EOF; tested case/global/interrupt distinctions and pending verification |
+| 3: state/storage | Original precedes acknowledgment; shrink crash retains token; separate lineage writes; incompatible exact versions, failed writes, and reopened stores preserve original bytes |
+| 4: formal/properties | Lean budget precedence and abstract original preservation; eight generated budget cases against the live Rust expiry function; proptest framing, suffixes, and real artifact operations |
+| 5: design/evidence | Exact-version Python seam remains isolated; strict Python/Rust checks, both native interpreters, bounded fuzzing and license/source checks; no product/platform adoption claim |
+
+Lean 4.34.1 built `BudgetModel` and `budget-oracle` under an external 20-second
+bound. The abstract finding theorem proves append operations preserve the original
+for any list of derived candidates. It does not prove filesystem atomicity or the
+whole controller. The budget correspondence exercises the actual Rust helper under
+injected Boolean clock predicates (`internal-fixture`), separately from real-time
+process tests. Corpus freshness is checked by the generated executable.
+
+With nightly-2026-10-08 and cargo-fuzz 0.13.2, `wire` and `tail` each completed
+10,000 libFuzzer executions without a crash. Each invocation used
+`-max_total_time=10 -runs=10000 -timeout=1 -rss_limit_mb=512`. The wire target feeds
+both payload decoding and complete framing; the tail target checks exact retained
+suffixes across chunk boundaries. These bounded observations are not proofs of
+absence of bugs. The fuzz workspace has its own lockfile and ignores generated
+corpora/artifacts; meaningful discovered regressions belong in ordinary tests.
+
+Reproduction uses the commands in the plan with the experiment interpreter
+instead of an implicit environment. Run cargo-deny with global options before
+`check`: `cargo deny --manifest-path experiments/python-fuzzing/Cargo.toml
+--config experiments/python-fuzzing/deny.toml --locked check --deny warnings
+licenses sources`. The CLI refuses unavailable hard memory enforcement by default;
+Task 4's process probes explicitly opted into best effort. Current process-group
+cleanup is weaker than containment: deliberately detached descendants are outside
+that guarantee. Task 5 owns capability enforcement and native OS evidence.
+
+The probe starts a fresh process for each finite invocation/verification/shrink.
+Within-worker pytest scope behavior is evidenced by Task 1. These timings include
+additional setup and do not measure a production scheduler. POSIX control-FD
+corruption/closure are deliberate trusted-bootstrap fault injections, not security
+sandbox tests. Native Windows/Linux results and full campaign scheduling remain
+unverified. A finite fixed schedule bounds this stage's retained report size;
+streaming search must additionally bound report accumulation in Task 6.
+
+Task 4 source snapshots (working tree after `624775b`):
+
+| Source | SHA-256 at observation |
+| --- | --- |
+| `Cargo.toml` | `6c97cd4397d40b150d79264e09e61296f32ec4a2ca4849ccf56e472fb0d7e012` |
+| `src/controller.rs` | `b29c9ff68fea2dc60fbec6fef393adbde54fa21b41380d7495513d394eb120ca` |
+| `src/artifacts.rs` | `e23b78421c27b971b88808fffa6c0c310bba61e468af2021c50b13ed6047a8b4` |
+| `src/wire.rs` | `6368f284074fc9444b1377bca81e23c767199d310fdf8381ec37f9135b435592` |
+| `src/main.rs` | `c2d8d366b8f96e3af8f1e53e7129a918885b0c4b1ad4b66cd7e74ac135e28d13` |
+| `worker.py` | `34674cff0a1661b3dd061afede1d3a0ed5ca7b6c397aad65933c5b8de9c14015` |
+| `wire.py` | `012c1253559b4dea3311949c2487028fb9af95c5a18e97b7778f9fb184631925` |
+| `adapter.py` | `3ad12676b21a712222ac6b7f36d7df78c73ad32e4c4f49fba959fbba3b1318ca` |
+| `hypothesis_bridge.py` | `8f98e9b2472560762f90cf51f04568193519de9142d1802f6a081ff9563182b0` |
+| `tests/test_controller.py` | `ef858f9ce65866bbf745dd5572a8466771626c2a308734f527279c82a9c09881` |
+| `formal/BudgetModel.lean` | `34f0833a5a90ba9ea4bc6f6d35ecfd066b5674d438da42460eaafb8c022d822d` |
+| `formal/budget-cases.tsv` | `5d7a08608b54635f2dcd423a57423c358224827c10ec1eec152a71fcc7a7aba8` |
+
 ## Remaining gates
 
-Rust supervision, native crash recovery, OS process limits, and coverage-guided
-discovery remain unverified. Sampled adapter/shrink/monitoring results above do
-not close those gates. No Rust experimental boundary exists
-yet, so proptest/cargo-fuzz execution is pending Tasks 4-6, not reported as done.
-Production engine choice and full platform acceptance remain open.
+OS memory/descendant enforcement and coverage-guided discovery remain unverified.
+No native Linux/Windows result is inferred from the local supervision tests.
+Production engine choice and full platform acceptance remain open. The next
+experiments must measure actual capabilities and bounded guided discovery.

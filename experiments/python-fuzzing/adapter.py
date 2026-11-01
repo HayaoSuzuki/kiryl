@@ -280,14 +280,14 @@ def minimize(
     return result
 
 
-def _replay_main() -> None:
-    request = json.loads(Path(sys.argv[1]).read_text())
+def run_token(nodeid: str, token: bytes, pytest_args: list[str]) -> CaseResult:
+    """Evaluate an opaque replay token inside this worker's fresh pytest context."""
     result = None
 
     def operation(item: pytest.Function) -> None:
         nonlocal result
-        evaluated = bind_target(item).check_token(bytes.fromhex(request["token"]))
-        expected = unpack_token(bytes.fromhex(request["token"])).get("fingerprint")
+        evaluated = bind_target(item).check_token(token)
+        expected = unpack_token(token).get("fingerprint")
         status = (
             "confirmed"
             if evaluated.kind == "failure" and evaluated.fingerprint == expected
@@ -295,10 +295,16 @@ def _replay_main() -> None:
         )
         result = CaseResult(item.nodeid, **vars(evaluated), verification=status)
 
-    _in_context(request["nodeid"], request["pytest_args"], operation)
+    _in_context(nodeid, pytest_args, operation)
     if result is None:
         message = "replay did not execute a target"
         raise RuntimeError(message)
+    return result
+
+
+def _replay_main() -> None:
+    request = json.loads(Path(sys.argv[1]).read_text())
+    result = run_token(request["nodeid"], bytes.fromhex(request["token"]), request["pytest_args"])
     value = asdict(result)
     for key in ("canonical", "replay_token"):
         if value[key] is not None:

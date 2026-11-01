@@ -6,12 +6,10 @@ status: draft
 sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
-  working_tree: modified
-  sha256: 9fad230abe9609b28987e4b39c273e061e8ceba93e3799638f32949261f8e7e1
+  revision: 624775b
 - id: monitor
   resource: ../../../experiments/python-fuzzing/monitor.py
-  working_tree: untracked
-  sha256: fc6c5cbf33ada4a7c0aaf77154d431f0aa76eba15009505a82c4dca3e450fac3
+  revision: 624775b
 ---
 # Observed boundary
 

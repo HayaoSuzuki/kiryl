@@ -20,5 +20,8 @@ implementation correctness or human review.
 - [Python coverage audit](python-coverage-audit.md): Per-case application feedback,
   monitoring ownership, coexistence limitations, and measured component overhead.
 
+- [Rust supervision audit](rust-supervision-audit.md): Native process recovery,
+  bounded transport, original persistence and budget/model limits.
+
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.

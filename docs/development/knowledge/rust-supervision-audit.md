@@ -1,0 +1,44 @@
+---
+type: Audit
+title: Rust supervision experiment
+description: Native process recovery, bounded transport, persistence and budget evidence.
+status: draft
+sources:
+- id: results
+  resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
+  working_tree: modified
+  sha256: ed46eebc80d34213c2801e38bcc6c297d77cca6db0a5de4c5a4a6b2b13ddf46a
+- id: controller
+  resource: ../../../experiments/python-fuzzing/src/controller.rs
+  working_tree: untracked
+  sha256: b29c9ff68fea2dc60fbec6fef393adbde54fa21b41380d7495513d394eb120ca
+---
+# Observed behavior
+
+The isolated Rust parent retains active raw inputs, writes originals before
+acknowledging failures, runs fresh replay, and acknowledges opaque shrink tokens.
+Real native crashes and bounded binary floods preserve evidence and independent
+tests continue. Native macOS CPython 3.14.9/3.15.2 each pass 48 experiment tests;
+Rust's eight tests include framing, log-tail, artifact proptest and a Lean-generated
+budget corpus. Bounded cargo-fuzz runs and exact source snapshots are recorded in
+the evidence.[^results][^controller]
+
+# Ownership and limits
+
+Python owns pytest/Hypothesis semantics; Rust owns control framing, active input,
+time, original/derived writes and logs. Campaign expiry precedes a case timeout;
+interrupts and transport failures remain distinct. Derived evidence never replaces
+original bytes. Abstract Lean theorems cover budget precedence and append-only
+finding state, not Python, operating-system behavior or filesystem durability.
+The corpus checks the live Rust predicate helper with injected predicates, while
+real process tests check timing and termination separately.[^results][^controller]
+
+These are finite experiments with explicit best-effort opt-in, fresh workers per
+invocation, and pending verification on returned best shrink tokens. They do not
+establish hard memory enforcement, hostile-process containment, production
+scheduling, discovery effectiveness, or native Windows/Linux support. Recheck when
+transport, budget boundaries, persistence, process lifetime or the bridge changes.
+Resource control and streaming search require their own subsequent evidence.[^results]
+
+[^results]: [Observed commands, five reviews, exact snapshots and limits](../work/coverage-guided-python-fuzzing/feasibility-results.md).
+[^controller]: [Experimental supervision owner](../../../experiments/python-fuzzing/src/controller.rs).
