@@ -612,3 +612,43 @@ First-matrix JUnit totals (observed at `adc7845`):
 | `windows-latest-python-3.15` | 112 | 0 | 5 |
 
 Linux correction source: `worker.py` SHA-256 `ba25bf429d0f54cc5c4362007c5dc58661ba9e430b0d60f916974a456838eff5`.
+
+
+## Corrected native CI matrix
+
+[The corrected matrix](https://github.com/HayaoSuzuki/kiryl/actions/runs/41289511338)
+at `7eeaa0fc50b8b08bb565e974f46fae923dc8948f` passed all six native jobs and
+the separate Lean job. The PR's other Rust, workflow, documentation and dependency
+audit/policy checks also passed. Every Linux abort regression, including the
+post-attachment dumpability probe, passed. This supports the per-worker correction;
+it does not independently trace the original runner's core-handler timing.
+
+| Native cell | Passed | Skipped | Required hard-memory probes |
+| --- | --- | --- | --- |
+| macOS / Python 3.14 | 111 | 4 | Unverified |
+| macOS / Python 3.15 | 111 | 4 | Unverified |
+| Linux / Python 3.14 | 112 | 3 | Unverified: delegated cgroup unavailable |
+| Linux / Python 3.15 | 112 | 3 | Unverified: delegated cgroup unavailable |
+| Windows / Python 3.14 | 109 | 6 | Passed using Job Objects |
+| Windows / Python 3.15 | 109 | 6 | Passed using Job Objects |
+
+The skipped tests are explicit platform/backend exclusions. A green CI job is
+not a completed hard-resource gate on macOS or these Linux runners. Windows
+passed the tested aggregate/setup/concurrent-memory cases; notification delivery
+completeness and direct Win32-handle output capture remain outside these probes.
+No product platform-support claim follows from the synthetic matrix.
+
+All 30 downloaded raw seed records revalidated locally, including source/report
+hashes, JUnit outcomes and independent storage. The 180 bounded comparisons used
+five seeds per cell, two targets and three modes. In every cell, guided search
+found and freshly confirmed both planted failures in 5/5 seeds. Unguided mutation
+found the stateful failure in 5/5 and branching in 0/5; ordinary Hypothesis found
+both in 5/5. This agrees with the earlier local observations without establishing
+general superiority. The source revision and measurements differ from the earlier
+60 local comparisons and must not be pooled as independent statistical evidence.
+
+The [native manifest](evidence/ci-native-matrix.json) records the run, actual
+revision, artifact names, JUnit hashes and totals. Its linked compact JSON files
+retain the original summary values with CRLF normalized to LF. The manifest
+records artifact-summary and maintained-file hashes separately. Full raw bundles are retained locally and
+as seven-day CI artifacts; the compact files alone are not replay bundles.

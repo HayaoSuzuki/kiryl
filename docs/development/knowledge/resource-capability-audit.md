@@ -22,6 +22,10 @@ sources:
 - id: core
   resource: https://www.man7.org/linux/man-pages/man5/core.5.html
   accessed: '2026-11-01'
+- id: native
+  resource: ../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json
+  working_tree: untracked
+  sha256: 5177b6bc8d78afdf7bcfc86de3c278d83a489d92fc4414d6de8fdd9d85d7d792
 ---
 # Capability contract and observations
 
@@ -38,6 +42,17 @@ unattached PYTHONPATH startup execution. Cleanup authority is consumed before a
 fallible numeric-PID operation; Lean models arbitrary repeated requests, with
 bounded generated cases against the actual guard's pre-signal failure path.
 Kernel calls themselves remain outside that theorem.[^results][^resource]
+
+# Subsequent native observations
+
+The corrected six-cell CI matrix at `7eeaa0f` passed its behavioral probes and
+fixed-seed comparisons. Windows passed the aggregate/setup/concurrent hard-memory
+probes using Job Objects. macOS lacks a hard backend and these Linux runners lack
+a delegated cgroup, so their hard gates remain unverified. Linux's initial abort
+misclassification was corrected with per-worker dumpability disabled; the actual
+Linux syscall and fresh abort replay probes passed. These sampled observations
+supersede the earlier cross-target-only status, not the notification or direct
+Win32-output limitations.[^native]
 
 # Classification and limits
 
@@ -71,3 +86,5 @@ Windows assignment/notification changes, or any altered startup sequence.[^resul
 [^dumpable]: [Linux per-process dumpability policy](https://www.man7.org/linux/man-pages/man2/PR_SET_DUMPABLE.2const.html).
 
 [^core]: [Linux core limits and piped handlers](https://www.man7.org/linux/man-pages/man5/core.5.html).
+
+[^native]: [Native matrix revision, JUnit totals and observed gates](../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json).

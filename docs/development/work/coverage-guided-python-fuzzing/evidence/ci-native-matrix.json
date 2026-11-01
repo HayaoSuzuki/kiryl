@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "revision": "7eeaa0fc50b8b08bb565e974f46fae923dc8948f",
+  "run_url": "https://github.com/HayaoSuzuki/kiryl/actions/runs/41289511338",
+  "raw_artifact_retention_days": 7,
+  "cells": [
+    {
+      "artifact": "feasibility-macos-latest-python-3.14",
+      "summary": "ci-darwin-python314.json",
+      "summary_sha256": "1b3975490d930190a530bb65830c883da0186330ce1b732657a8520a3051979a",
+      "junit_sha256": "87b04681eadee9d51d1562a39fe7f005b28a83979602841d057828316d3c9ea9",
+      "environment": {
+        "platform": "darwin",
+        "python": [
+          3,
+          14
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "unverified"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 4
+      },
+      "status": "partial",
+      "artifact_summary_sha256": "1b3975490d930190a530bb65830c883da0186330ce1b732657a8520a3051979a"
+    },
+    {
+      "artifact": "feasibility-macos-latest-python-3.15",
+      "summary": "ci-darwin-python315.json",
+      "summary_sha256": "e99849faaba85dadf81918074b37ff06fd90594fea16f7868882facdbf66a6fc",
+      "junit_sha256": "6d9649ccda2d5b22410faff4624d75316f0a4a89f98eaf679008655cb92d41aa",
+      "environment": {
+        "platform": "darwin",
+        "python": [
+          3,
+          15
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "unverified"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 4
+      },
+      "status": "partial",
+      "artifact_summary_sha256": "e99849faaba85dadf81918074b37ff06fd90594fea16f7868882facdbf66a6fc"
+    },
+    {
+      "artifact": "feasibility-ubuntu-latest-python-3.14",
+      "summary": "ci-linux-python314.json",
+      "summary_sha256": "537598a081a063957339583b21f1af7812a6031ffaa40c872464d6701fe1a115",
+      "junit_sha256": "13fea19cd9e2055d6095cefd5cf4f033bbf800b1aede8577a80000e8b4efa770",
+      "environment": {
+        "platform": "linux",
+        "python": [
+          3,
+          14
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "unverified"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 3
+      },
+      "status": "partial",
+      "artifact_summary_sha256": "537598a081a063957339583b21f1af7812a6031ffaa40c872464d6701fe1a115"
+    },
+    {
+      "artifact": "feasibility-ubuntu-latest-python-3.15",
+      "summary": "ci-linux-python315.json",
+      "summary_sha256": "039cfde78150be6ca33137eb15641e464af345e733017a719cd622d46d2ad6b3",
+      "junit_sha256": "a8a2126d710d1e28145f5608fdef06f6314dd568870fb9da7042000cbec33fa1",
+      "environment": {
+        "platform": "linux",
+        "python": [
+          3,
+          15
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "unverified"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 3
+      },
+      "status": "partial",
+      "artifact_summary_sha256": "039cfde78150be6ca33137eb15641e464af345e733017a719cd622d46d2ad6b3"
+    },
+    {
+      "artifact": "feasibility-windows-latest-python-3.14",
+      "summary": "ci-win32-python314.json",
+      "summary_sha256": "6544623c979ed5aa4bb358789b0953a8653dde6c9eea3c0558d878d2bbac5a21",
+      "junit_sha256": "0cea41ce21e4d65ada25b2dc45a5a1e302fdf6248d30e09200728f4aa4413a2c",
+      "environment": {
+        "platform": "win32",
+        "python": [
+          3,
+          14
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "passed"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 6
+      },
+      "status": "passed",
+      "artifact_summary_sha256": "4d8dd0dc60158347a452a628765845fbf70f462baecb7bdf3fdbb00caa5072b5"
+    },
+    {
+      "artifact": "feasibility-windows-latest-python-3.15",
+      "summary": "ci-win32-python315.json",
+      "summary_sha256": "42f39489fab823a292ebffeda87f382361517d3653c626b075ec98eb2c09c4dc",
+      "junit_sha256": "7160e062132cd43577eea79084bedf7fcf8460d6945fc321a00b3e8a76b5dc48",
+      "environment": {
+        "platform": "win32",
+        "python": [
+          3,
+          15
+        ],
+        "implementation": "cpython"
+      },
+      "probes": {
+        "fixtures": "passed",
+        "stateful": "passed",
+        "replay": "passed",
+        "crash": "passed",
+        "logs": "passed",
+        "monitoring": "passed",
+        "hard_memory": "passed"
+      },
+      "totals": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 6
+      },
+      "status": "passed",
+      "artifact_summary_sha256": "e71cdbdb07b8fa78c44a77a6000f6ce055aea6296e911504108642b4dbbbbc95"
+    }
+  ],
+  "raw_records_revalidated": 30,
+  "comparison_samples": 180,
+  "scope": "synthetic feasibility observations; not a product support claim",
+  "summary_encoding": "UTF-8; CRLF normalized to LF in maintained copies; artifact and maintained hashes recorded separately"
+}

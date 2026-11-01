@@ -7,7 +7,7 @@ sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
   working_tree: modified
-  sha256: 157f9579e23f6de74254248a9ca3f6ec34e190e67a3b83d55e9ce0adabb746e9
+  sha256: ac186e1b4b844672fe5a1f9c11ae93d1e74a2c121094953c1701157bde6074f6
 - id: search
   resource: ../../../experiments/python-fuzzing/src/search.rs
   revision: bda21333dcef690dc53df8d318763eeb9bd5c78c
@@ -21,6 +21,10 @@ sources:
 - id: sample315
   resource: ../work/coverage-guided-python-fuzzing/evidence/macos-python315.json
   revision: bda21333dcef690dc53df8d318763eeb9bd5c78c
+- id: native
+  resource: ../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json
+  working_tree: untracked
+  sha256: 5177b6bc8d78afdf7bcfc86de3c278d83a489d92fc4414d6de8fdd9d85d7d792
 ---
 # Observed discovery
 
@@ -52,9 +56,11 @@ artifacts. Attempt counts have different measurement scopes across modes.[^evide
 # Decision and limits
 
 Continue architecture A's native experiments; keep production engine adoption
-open. Local fallback behavior and the passing regression suites do not establish
-hard memory enforcement or native Linux/Windows support. Cross-target checks and
-a defined workflow are not native execution. Full campaign/CLI scope remains the
+open. The subsequent native matrix passed all six OS/minor jobs and 180
+comparisons. Windows passed the tested hard-memory gates; macOS and these Linux
+runners retain unverified hard-memory gates. Synthetic native observations do not
+establish product platform support or complete Windows notification/Win32-output
+semantics.[^native] Full campaign/CLI scope remains the
 plan's dependent follow-on. Reconsider after actual native probes, strategy/pin,
 coverage ID, transport/resource, corpus or sampling-method changes.[^results]
 
@@ -63,3 +69,5 @@ coverage ID, transport/resource, corpus or sampling-method changes.[^results]
 [^evidence]: [Evidence integrity validator](../../../experiments/python-fuzzing/evidence.py).
 [^sample314]: [CPython 3.14 compact observations](../work/coverage-guided-python-fuzzing/evidence/macos-python314.json).
 [^sample315]: [CPython 3.15 compact observations](../work/coverage-guided-python-fuzzing/evidence/macos-python315.json).
+
+[^native]: [Corrected native CI manifest and compact observations](../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json).
