@@ -66,6 +66,50 @@ def lifecycle():
     open("teardown.txt", "a").write("done\\n")
 
 @pytest.fixture
+def blocked_receive():
+    import worker
+    original = worker.receive
+    def blocked(stream):
+        time.sleep(2)
+        return {}
+    worker.receive = blocked
+    yield
+    worker.receive = original
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(st.integers(0, 255))
+def test_blocked_input(blocked_receive, value):
+    pass
+
+@pytest.fixture
+def fatal_teardown():
+    yield
+    os.abort()
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(st.integers(0, 255))
+def test_failure_then_fatal_teardown(fatal_teardown, value):
+    assert False
+
+@pytest.fixture
+def slow_shrink_ack():
+    import hypothesis_bridge
+    original = hypothesis_bridge.BoundTarget.minimize
+    def delayed(self, token, budget_seconds, before_case):
+        def acknowledged(candidate):
+            before_case(candidate)
+            time.sleep(0.6)
+        return original(self, token, budget_seconds, acknowledged)
+    hypothesis_bridge.BoundTarget.minimize = delayed
+    yield
+    hypothesis_bridge.BoundTarget.minimize = original
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(st.integers(0, 255))
+def test_unlimited_shrink(slow_shrink_ack, value):
+    assert value < 1
+
+@pytest.fixture
 def broken_setup():
     raise RuntimeError("synthetic fixture failure")
 
@@ -360,3 +404,53 @@ def test_invalid_result_still_keeps_active_input(
     outcome = report["outcomes"][0]
     assert outcome["kind"] == "infrastructure"
     assert json.loads(Path(outcome["original"]).read_text())["input"] == [8]
+
+
+def test_blocked_input_writer_cannot_hide_campaign_deadline(
+    probe_run: Callable[..., tuple[int, Report]],
+) -> None:
+    """A real worker can request input then stop reading; parent deadlines still apply."""
+    supplied = b"x" * 65536
+    code, report = probe_run(("blocked_input",), inputs=(supplied,), campaign_ms=700)
+    assert code == 1
+    outcome = report["outcomes"][0]
+    assert outcome["kind"] == "campaign_cancelled"
+    assert json.loads(Path(outcome["original"]).read_text())["input"] == list(supplied)
+
+
+def test_finding_does_not_hide_fatal_teardown(probe_run: Callable[..., tuple[int, Report]]) -> None:
+    """A saved oracle failure cannot turn incomplete pytest teardown into success."""
+    code, report = probe_run(("failure_then_fatal_teardown", "ok"))
+    assert code == 2  # noqa: PLR2004 -- documented infrastructure exit
+    assert report["outcomes"][0]["kind"] == "failure"
+    assert Path(report["outcomes"][0]["original"]).exists()
+    assert any(outcome["kind"] == "infrastructure" for outcome in report["outcomes"])
+    assert report["outcomes"][-1]["kind"] == "pass"
+
+
+def test_non_object_config_reports_infrastructure(tmp_path: Path) -> None:
+    """Malformed configuration is a controlled error with a durable report."""
+    config = tmp_path / "invalid.json"
+    config.write_text("[]")
+    out = tmp_path / "out"
+    completed = subprocess.run(  # noqa: S603 -- owned probe and invalid local config
+        [str(BINARY), "run", "--config", str(config), "--out", str(out)],
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert completed.returncode == 2  # noqa: PLR2004 -- documented infrastructure exit
+    assert json.loads((out / "report.json").read_text())["outcomes"][0]["kind"] == "infrastructure"
+
+
+def test_unlimited_campaign_has_no_hidden_one_second_shrink_budget(
+    probe_run: Callable[..., tuple[int, Report]],
+) -> None:
+    """No campaign limit permits a semantic shrink spanning multiple slow acknowledgments."""
+    code, report = probe_run(("unlimited_shrink",), campaign_ms=None, case_ms=2500)
+    assert code == 1
+    finding = report["outcomes"][0]
+    records = [json.loads(Path(path).read_text())["evidence"] for path in finding["derived"]]
+    minimized = [item for item in records if item["mode"] == "minimize"]
+    assert minimized
+    assert minimized[0]["complete"] is True

@@ -1,0 +1,98 @@
+name: Fuzzing feasibility
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/python-fuzzing/**'
+      - '.github/workflows/fuzzing-feasibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzzing-feasibility-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  native:
+    name: Native ${{ matrix.os }} Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.14', '3.15']
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON_VERSION: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: Install pinned experiment dependencies and Rust
+        run: |
+          uv sync --project experiments/python-fuzzing --frozen --python "$PYTHON_VERSION"
+          rustup toolchain install
+      - name: Check and build experimental Rust workspace
+        run: |
+          cargo fmt --manifest-path experiments/python-fuzzing/Cargo.toml -- --check
+          cargo clippy --manifest-path experiments/python-fuzzing/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path experiments/python-fuzzing/Cargo.toml --locked
+          cargo build --manifest-path experiments/python-fuzzing/Cargo.toml --locked
+      - name: Check strict Python configuration
+        run: |
+          uv run --project experiments/python-fuzzing --frozen --no-sync ruff check experiments/python-fuzzing
+          uv run --project experiments/python-fuzzing --frozen --no-sync ruff format --check experiments/python-fuzzing
+          uv run --project experiments/python-fuzzing --frozen --no-sync ty check --project experiments/python-fuzzing --python-version "$PYTHON_VERSION"
+      - name: Run native behavioral probes
+        run: |
+          mkdir -p feasibility-evidence
+          uv run --project experiments/python-fuzzing --frozen --no-sync pytest experiments/python-fuzzing/tests -q --junitxml=feasibility-evidence/probes.xml
+      - name: Run fixed-seed bounded comparisons
+        if: ${{ !cancelled() }}
+        run: uv run --project experiments/python-fuzzing --frozen --no-sync python experiments/python-fuzzing/benchmark.py --out feasibility-evidence/comparisons --junit feasibility-evidence/probes.xml
+      - name: Retain observations including failed gates
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feasibility-${{ matrix.os }}-python-${{ matrix.python }}
+          path: feasibility-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+  formal:
+    name: Lean models and generated oracle freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned official Lean distribution through gh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lean_destination="$RUNNER_TEMP/kiryl-lean"
+          mkdir -p "$lean_destination"
+          gh release download v4.34.1 --repo leanprover/lean4 --pattern lean-4.34.1-linux.tar.zst --dir "$lean_destination"
+          tar --zstd -xf "$lean_destination/lean-4.34.1-linux.tar.zst" -C "$lean_destination"
+          echo "$lean_destination/lean-4.34.1-linux/bin" >> "$GITHUB_PATH"
+      - name: Check proofs and generated expectations
+        working-directory: experiments/python-fuzzing/formal
+        run: |
+          lake build
+          .lake/build/bin/scope-oracle --check scope-cases.tsv
+          .lake/build/bin/budget-oracle --check budget-cases.tsv
+          .lake/build/bin/resource-oracle --check resource-cases.tsv
+          .lake/build/bin/search-oracle --check search-cases.tsv

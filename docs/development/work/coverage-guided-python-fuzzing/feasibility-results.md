@@ -380,10 +380,121 @@ Task 5 source snapshots (working tree after `962198c`):
 | `formal/ResourceModel.lean` | `2ee9a138fcb63ba4473845ac334812ca15963aa8c6e20f0a0ea273673c41974f` |
 | `formal/resource-cases.tsv` | `a6abf5c676c978615f6e50ad126a8e9353f660214ff44d888b146416c37bff4c` |
 
-## Remaining gates
+## Task 6: Guided discovery and measured evidence
 
-Native Linux/Windows hard enforcement, independent concurrent allowances, and
-coverage-guided discovery remain unverified. The two local hard-backend skips
-leave those gates open; they are not passing observations. The next stage must
-measure discovery and obtain actual native evidence. Production adoption remains
-undecided; no matrix cell is completed by defining or compiling a workflow.
+The completed local sample contains 60 comparisons: two native interpreters,
+two authored targets, three modes, and seeds 0 through 4. Each comparison had a
+20-second total limit including worker/pytest setup, replay and shrinking. Modes
+used disjoint freshly created database/corpus parent directories; no known failure
+input or previous database was an initial discovery seed. Order rotates by seed.
+Both interpreter campaigns ran concurrently on the same host, with one Python
+worker per independent campaign. Timing is illustrative, not an isolated CPU or
+statistical performance experiment.
+
+The compact observations retain exact source/binary hashes, versions, seeds,
+limits, attempts, useful/rejected calls, branches, corpus sizes, discoveries,
+first-discovery time, replay/shrink cost, adapter/roundtrip timing and actual
+capabilities: [CPython 3.14](evidence/macos-python314.json) and
+[CPython 3.15](evidence/macos-python315.json). Their `partial` status retains the
+unverified hard-backend category; it does not discard the passing adapter and
+fallback observations. Local raw records remain in the ignored experiment results
+directories. The workflow retains its own raw bundles for seven days. Compact
+summaries are observations, not standalone replay bundles.
+
+| Native runtime | Target | Guided discoveries/fresh confirmations | Feedback disabled discoveries | Ordinary Hypothesis discoveries |
+| --- | --- | --- | --- | --- |
+| macOS CPython 3.14.9 | Nested branching | 5/5; 5/5 | 0/5 | 5/5 |
+| macOS CPython 3.14.9 | Stateful store | 5/5; 5/5 | 5/5 | 5/5 |
+| macOS CPython 3.15.2 | Nested branching | 5/5; 5/5 | 0/5 | 5/5 |
+| macOS CPython 3.15.2 | Stateful store | 5/5; 5/5 | 5/5 | 5/5 |
+
+Guided exploration retained four corpus entries for the branching specimen and
+four to six for the stateful specimen. The feedback-disabled corpus stayed at its
+single zero seed. Both modes still observed application branches; only retention
+used feedback. Controlled same-input ablation and deterministic feedback-stream
+proptest verify that this distinction is implemented. The sample establishes
+branch-driven retention and replayable planted discoveries. It does not establish
+superiority on real applications, against Hypothesis, or against any commercial
+product. The stateful specimen was found by every mode, including mutation without
+feedback.
+
+The ordinary comparison uses pytest's normal Hypothesis generation, verification
+and shrinking with measurement callbacks. Its stateful unittest wrapper constructs
+`@given` lazily, so the pinned seam intercepts that factory for one synchronous
+call and restores it. Runtime digest equality and reuse-only ordinary/stateful
+database tests verify identity preservation. These callbacks add overhead and
+stack frames. Ordinary counts include inner oracle replays/shrink calls but exclude
+rejections occurring before the oracle is entered; kiryl search counts exclude its
+subsequent verification/shrink. They are not comparable generation-rate estimates.
+The authored properties explicitly disable Hypothesis deadlines in every mode.
+
+`confirmed_original` is a kiryl fresh-replay measure and is not applied to ordinary
+Hypothesis observations. Roundtrip minus adapter time includes serialization,
+pipe exchange and scheduling; it is not pure IPC latency. The adapter timer covers
+bridge draws/monitoring for mutation, and inner oracle/monitoring for ordinary
+Hypothesis. Replay/shrink wall times include fresh-worker setup. Budget cancellation
+is an explicit probe outcome and may produce exit1 without discovery; discovery
+counts use the explicit observation field, not the exit code.
+
+| Self-review | Finding/action and evidence |
+| --- | --- |
+| 1: contract/scope | Streaming feeds back before the next proposal; retained inputs canonicalize only after valid passes; native ordinary/stateful measurement preserves reuse-only DB identity. Async and Hypothesis configuration/health-check errors initially misclassified, then regressions RED to GREEN |
+| 2: boundaries/errors | A requested large input could block the parent writer and hide its deadline; bounded writer thread regression RED to GREEN. Finding followed by fatal teardown could hide infrastructure; regression RED to GREEN. Unlimited campaigns had an unintended one-second shrink budget; slow-ack regression RED to GREEN |
+| 3: state/side effects | WNOWAIT preserves the Unix identity anchor until cleanup; native waitpid regression RED to GREEN. macOS rejects zombie-only group signaling even outside sandbox; a live owned group member permits cleanup. Aggregate log/case histories stay bounded; comparison namespaces never share DB/corpus parents |
+| 4: proof/properties/sensitivity | Lean retention/reject/count model and 21 generated boundary cases; deterministic-stream, framing, suffix and immutable-artifact proptest. Three cargo-fuzz targets each completed 10,000 runs. One Hypothesis measurement guard mutant was killed after a fresh passing baseline |
+| 5: design/evidence | Rust owns proposals/time/processes/persistence; Python owns pytest/Hypothesis/monitoring. Strict checks and both native suites pass; all ten raw evidence files validate. The six-cell workflow is read-only, uses rechecked pinned actions and gh for Lean retrieval; no native result is inferred from configuration |
+
+The final local suites passed 68 tests with three explicit hard-backend skips on
+each interpreter. Rust passed 14 tests, including three search integration/property
+checks. Ruff ALL/format and ty all-error checks pass; separate darwin/linux/win32
+type checks cover conditional APIs. Both Linux/Windows cross-target Clippy checks
+pass. The workflow passed actionlint/ShellCheck and offline zizmor, with no findings.
+No root product behavior changed, so the user guide remains scaffold guidance.
+
+Lean 4.34.1 builds four small models and executable oracle generators. The new
+search theorem bounds abstract corpus counts for arbitrary observation sequences
+and leaves rejects unchanged. Its count abstraction assumes fresh, bounded
+canonical payloads; the real Rust correspondence uses explicit unique four-byte
+fixtures across rejection, duplicate and saturation boundaries. This is an
+`internal-fixture` count correspondence, not proof of byte mutation, strategy
+semantics, the Python implementation, the operating system or discovery efficacy.
+No `sorry`/`native_decide` is used; builds have external 20-second bounds.
+
+With cargo-fuzz 0.13.2 and nightly-2026-10-08, `wire`, `tail` and `search` each
+completed 10,000 executions with 10-second campaign bounds, 1-second input timeout
+and 512 MiB RSS ceilings. The new target checks bounded proposals/corpora and reject
+non-retention. Reproduction is in the experiment fuzz manifests; generated corpora
+are ignored. These runs and the single killed mutation are finite sensitivity
+observations, not complete coverage or proofs that no bugs remain.
+
+Standalone and fuzz-workspace cargo-deny 0.20.2 license/source checks passed.
+The [fuzz-only policy](../../../../experiments/python-fuzzing/fuzz/deny.toml)
+adds an exact libfuzzer-sys 0.4.13 exception for its additional NCSA condition,
+reviewed against the [SPDX license text](https://spdx.org/licenses/NCSA.html).
+The root product allow-list is unchanged; dependency updates require re-review.
+
+The [native workflow](../../../../.github/workflows/fuzzing-feasibility.yml) runs
+behavioral probes and the fixed comparisons for all six OS/minor cells. Subsequent
+maintainer PR authorization permits relevant pull-request runs in addition to
+manual dispatch. Source installation and downloads are development setup; the
+probe itself has no service account or outbound-network requirement. Full product
+campaign scheduling, installation, standalone CLI replay/minimize and final engine
+adoption remain dependent follow-on work, as scoped in the plan.
+
+## Decision and remaining gates
+
+| OS/runtime cell | Observed here | Resource boundary |
+| --- | --- | --- |
+| macOS / CPython 3.14 | 68 passed, 3 explicit skips; five-seed comparisons validated | Default refusal and explicit portable fallback observed; hard enforcement unavailable |
+| macOS / CPython 3.15 | 68 passed, 3 explicit skips; five-seed comparisons validated | Same disclosed fallback boundary |
+| Linux / CPython 3.14 | Native unrun; cross-target type/Clippy only | Requires actual delegated-cgroup or explicit fallback observations |
+| Linux / CPython 3.15 | Native unrun; cross-target type/Clippy only | Same pending native evidence |
+| Windows / CPython 3.14 | Native unrun; cross-target type/Clippy only | Requires actual Job assignment, aggregate memory and cleanup observations |
+| Windows / CPython 3.15 | Native unrun; cross-target type/Clippy only | Same pending native evidence |
+
+Architecture A is feasible for the locally observed test forms and branch-driven
+search. Continue native experiments before production adoption. The next concrete
+gates are real Linux/Windows behavioral runs, hard-memory/setup/concurrent-allowance
+probes in capable environments, and campaign/CLI design against those observations.
+An unavailable delegated cgroup is not a passing hard-enforcement result. These
+limitations do not remove required stateful, fixture or platform scope.

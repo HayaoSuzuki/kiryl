@@ -3,11 +3,15 @@
 
 import json
 import os
+import subprocess
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from test_controller import BINARY
 from test_controller import probe_run as probe_run  # noqa: PLC0414 -- shared pytest fixture
 from test_controller import process_project as process_project  # noqa: PLC0414 -- shared pytest fixture
 
@@ -52,6 +56,13 @@ def test_flood_hang(value):
 @given(st.integers(0, 255))
 def test_unrelated_exit(value):
     os._exit(7)
+
+@given(st.integers(0, 255))
+def test_allocate_within_limit(value):
+    child = subprocess.Popen([sys.executable, "-c", (
+        "import time; data=bytearray(64*1024*1024); time.sleep(1)"
+    )])
+    assert child.wait() == 0
 
 @given(st.integers(0, 255))
 def test_allocate(value):
@@ -170,3 +181,45 @@ def test_setup_memory_limit_is_infrastructure(
     assert code == INFRASTRUCTURE_EXIT
     assert not (process_project / "target-started.txt").exists()
     assert report["outcomes"][0]["original"] is None
+
+
+def test_two_trees_have_independent_allowances(
+    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+) -> None:
+    """Two independent controllers may each consume their own hard allowance."""
+    _, report = probe_run(("ok",))
+    if not _capabilities(report)["tree_memory_hard"]:
+        pytest.skip("no native hard backend; concurrent allowance gate remains unverified")
+
+    def launch(index: int) -> tuple[int, dict[str, object]]:
+        out = process_project / f"independent-{index}"
+        config = process_project / f"independent-{index}.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "python": sys.executable,
+                    "pytest_args": [str(process_project), "-q", "-s"],
+                    "invocations": [
+                        {"test_id": "test_process.py::test_allocate_within_limit", "inputs": [[8]]}
+                    ],
+                    "limits": {
+                        "campaign_ms": 5000,
+                        "case_ms": 5000,
+                        "tree_memory_bytes": 160 * 1024 * 1024,
+                    },
+                }
+            )
+        )
+        result = subprocess.run(  # noqa: S603 -- independent owned probe/config
+            [str(BINARY), "run", "--config", str(config), "--out", str(out)],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode, cast(
+            "dict[str, object]", json.loads((out / "report.json").read_text())
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(launch, range(2)))
+    assert all(code == 0 for code, _ in results)

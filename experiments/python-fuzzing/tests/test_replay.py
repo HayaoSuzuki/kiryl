@@ -284,3 +284,21 @@ def test_unittest_setup_and_teardown_are_preserved(finding_project: Path) -> Non
     )
     assert [case.kind for case in evidence.cases] == ["pass"]
     assert (finding_project / "unit_teardown").exists()
+
+
+@pytest.mark.parametrize("name", ["test_integer", "TestAccumulator::runTest"])
+def test_measured_ordinary_path_reuses_original_database(finding_project: Path, name: str) -> None:
+    """Measurement leaves ordinary/stateful reuse-only Hypothesis identities intact."""
+    from adapter import run_ordinary  # noqa: PLC0415 -- exercise the optional comparison path
+
+    discover(finding_project, name)
+    observations = []
+    started = []
+    code, _ = run_ordinary(
+        [f"{finding_project / 'test_findings.py'}::{name}", "-q"],
+        started.append,
+        observations.append,
+    )
+    assert code == 1
+    assert started
+    assert any(case.kind == "failure" for case in observations)

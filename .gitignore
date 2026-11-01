@@ -38,3 +38,7 @@ __pycache__/
 experiments/python-fuzzing/fuzz/corpus/
 experiments/python-fuzzing/fuzz/artifacts/
 experiments/python-fuzzing/fuzz/coverage/
+
+# Reproducible experimental runs; compact observed summaries belong in docs
+experiments/python-fuzzing/results/
+/feasibility-evidence/

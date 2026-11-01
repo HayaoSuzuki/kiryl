@@ -26,5 +26,8 @@ implementation correctness or human review.
 - [Resource capability audit](resource-capability-audit.md): Startup attachment,
   fallback limits and native enforcement evidence still required.
 
+- [Guided discovery audit](guided-discovery-audit.md): Fixed-budget observations,
+  isolated baselines, model limits and pending native acceptance.
+
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.

@@ -2,7 +2,10 @@
 """Authored targets with real pytest fixtures for adapter correspondence tests."""
 
 import sys
-from collections.abc import Iterator  # noqa: TC003 -- fixture annotations are introspected
+from collections.abc import (
+    Callable,  # noqa: TC003 -- pytest introspects fixture annotations
+    Iterator,  # noqa: TC003 -- fixture annotations are introspected
+)
 from pathlib import Path  # noqa: TC003 -- fixture annotations are introspected
 
 import pytest
@@ -87,3 +90,11 @@ def test_fixed():
     # Repeated pytest.main calls are a test harness concern; real workers own
     # one session. Prevent same-basename temporary specimens contaminating it.
     sys.modules.pop("test_scopes", None)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def suite_provenance(record_testsuite_property: Callable[[str, str], None]) -> None:
+    """Bind JUnit probe observations to the actual native interpreter/platform."""
+    record_testsuite_property("kiryl.platform", sys.platform)
+    record_testsuite_property("kiryl.python", ".".join(map(str, sys.version_info[:2])))
+    record_testsuite_property("kiryl.implementation", sys.implementation.name)

@@ -23,6 +23,8 @@ ignore = ["D203", "D213", "COM812"]
 [tool.ruff.lint.per-file-ignores]
 # Assertions are the test oracle; pytest discovers this non-package directory.
 "tests/*.py" = ["S101", "INP001"]
+# Planted comparison properties intentionally assert defects; not normal discovery.
+"specimens/*.py" = ["S101", "INP001"]
 # These flat modules form a standalone, unpublished experiment, not a package.
 "*.py" = ["INP001"]
 # Approved version-pinned Hypothesis compatibility boundary only.

@@ -42,6 +42,14 @@ class Driver:
         self.case_id = cast("int", message["case_id"])
         return bytes(cast("list[int]", message["input"]))
 
+    def begin_ordinary(self, nodeid: str) -> None:
+        """Publish normal Hypothesis execution boundaries without requesting input."""
+        self.case_id += 1
+        send(self.control, {"kind": "baseline_case", "test_id": nodeid, "case_id": self.case_id})
+        if receive(sys.stdin.buffer)["kind"] != "ack":
+            message = "missing ordinary-case acknowledgment"
+            raise ValueError(message)
+
     def observe(self, result: CaseResult) -> None:
         """Wait until the parent has saved any original before continuing."""
         send(
@@ -53,7 +61,7 @@ class Driver:
             raise ValueError(message)
 
 
-def main() -> None:
+def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
     """Redirect FD-level stdout before importing pytest or target modules."""
     control = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
@@ -61,7 +69,17 @@ def main() -> None:
         import resource  # noqa: PLC0415 -- unavailable on Windows
 
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    send(control, {"kind": "ready"})
+    send(
+        control,
+        {
+            "kind": "ready",
+            "environment": {
+                "platform": sys.platform,
+                "python": list(sys.version_info[:2]),
+                "implementation": sys.implementation.name,
+            },
+        },
+    )
     request = receive(sys.stdin.buffer)
     if request["kind"] != "start":
         message = "session was not acknowledged"
@@ -79,7 +97,13 @@ def main() -> None:
         abort_behavior.restype = ctypes.c_uint
         abort_behavior(0, 3)
     site.main()
-    from adapter import Invocation, minimize, run_session, run_token  # noqa: PLC0415 -- after attachment
+    return control, request
+
+
+def main() -> None:
+    """Dispatch an attached worker operation without exposing target stdout."""
+    control, request = _bootstrap()
+    from adapter import Invocation, minimize, run_ordinary, run_session, run_token  # noqa: PLC0415 -- after attachment
 
     nodeid = cast("str", request["test_id"])
     args = cast("list[str]", request["pytest_args"])
@@ -90,6 +114,9 @@ def main() -> None:
         infrastructure = [asdict(case) for case in evidence.cases if case.kind == "infrastructure"]
         if infrastructure:
             send(control, {"kind": "error", "message": str(infrastructure)[-4096:]})
+    elif mode == "baseline":
+        code, statistics = run_ordinary(args, driver.begin_ordinary, driver.observe)
+        send(control, {"kind": "baseline_done", "exit_code": code, "statistics": statistics})
     elif mode == "replay":
         token = bytes(cast("list[int]", request["token"]))
         driver.observe(run_token(nodeid, token, args))

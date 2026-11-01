@@ -1,6 +1,8 @@
 -- Copyright (c) 2026 kiryl contributors
 import Std
 
+set_option maxHeartbeats 10000
+
 namespace BudgetModel
 
 inductive Stop where

@@ -3,4 +3,5 @@
 pub mod artifacts;
 pub mod controller;
 pub mod resource;
+pub mod search;
 pub mod wire;

@@ -12,11 +12,13 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass
+from functools import wraps
 from random import Random
 from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict, cast
 
 import hypothesis
-from hypothesis import settings
+import pytest
+from hypothesis import settings, stateful
 from hypothesis.core import (
     HypothesisHandle,
     StateForActualGivenExecution,
@@ -25,7 +27,7 @@ from hypothesis.core import (
     process_arguments_to_given,
 )
 from hypothesis.database import choices_from_bytes, choices_to_bytes
-from hypothesis.errors import UnsatisfiedAssumption
+from hypothesis.errors import FailedHealthCheck, InvalidArgument, UnsatisfiedAssumption
 from hypothesis.internal.conjecture.choice import ChoiceTemplate, ValueHole
 from hypothesis.internal.conjecture.data import ConjectureData, ConjectureResult, Status, StopTest
 from hypothesis.internal.conjecture.engine import ConjectureRunner
@@ -37,7 +39,6 @@ from hypothesis.stateful import get_state_machine_test
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pytest
     from hypothesis.internal.conjecture.shrinker import Shrinker
 
 SUPPORTED_VERSION = "6.170.13"
@@ -125,6 +126,9 @@ class BoundTarget:
         wrapped = cast("_Wrapped", wrapped)
         underlying = getattr(wrapped, "__func__", wrapped)
         inner = wrapped.hypothesis.inner_test
+        if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
+            message = "async properties are unsupported by the synchronous probe"
+            raise RuntimeError(message)
         supplied = {name: item.funcargs[name] for name in inspect.signature(wrapped).parameters}
         receiver = getattr(wrapped, "__self__", None)
         if receiver is not None:
@@ -188,6 +192,8 @@ class BoundTarget:
             )
         except StopTest, UnsatisfiedAssumption:
             return Evaluation("reject")
+        except InvalidArgument, FailedHealthCheck:
+            raise
         except failure_exceptions_to_catch() as error:
             origin = InterestingOrigin.from_exception(error)
             frames = traceback.extract_tb(error.__traceback__)
@@ -344,3 +350,74 @@ class _BudgetExpiredError(Exception):
 def bind_target(item: pytest.Function) -> BoundTarget:
     """Create an invocation-local binding behind the compatibility boundary."""
     return BoundTarget(item)
+
+
+def _measure_handle(
+    handle: HypothesisHandle,
+    before: Callable[[], None],
+    after: Callable[[Evaluation], None],
+) -> Callable[[], None]:
+    original = handle.inner_test
+
+    @wraps(original)
+    def measured(*args: object, **kwargs: object) -> object:
+        before()
+        outcome = Evaluation("pass")
+        try:
+            return original(*args, **kwargs)
+        except StopTest, UnsatisfiedAssumption:
+            outcome = Evaluation("reject")
+            raise
+        except failure_exceptions_to_catch() as error:
+            outcome = Evaluation(
+                "failure", fingerprint=str(InterestingOrigin.from_exception(error))
+            )
+            raise
+        finally:
+            after(outcome)
+
+    if function_digest(measured) != function_digest(original):
+        message = "measurement wrapper changes ordinary Hypothesis database identity"
+        raise RuntimeError(message)
+    handle.inner_test = measured
+
+    def restore() -> None:
+        handle.inner_test = original
+
+    return restore
+
+
+def instrument_ordinary(
+    item: pytest.Function,
+    before: Callable[[], None],
+    after: Callable[[Evaluation], None],
+) -> Callable[[], None]:
+    """Observe native Hypothesis generation/shrinking with unchanged database identity."""
+    if hypothesis.__version__ != SUPPORTED_VERSION:
+        message = "unsupported Hypothesis measurement version"
+        raise RuntimeError(message)
+    if not getattr(item.obj, "_hypothesis_state_machine_class", None):
+        return _measure_handle(cast("_Wrapped", item.obj).hypothesis, before, after)
+    original_factory = stateful.get_state_machine_test
+
+    def measured_factory(
+        state_machine_factory: type[stateful.RuleBasedStateMachine],
+        *,
+        settings: hypothesis.settings | None = None,
+        _min_steps: int = 0,
+        _flaky_state: dict[str, bool] | None = None,
+    ) -> Callable[..., None]:
+        wrapped = original_factory(
+            state_machine_factory,
+            settings=settings,
+            _min_steps=_min_steps,
+            _flaky_state=_flaky_state,
+        )
+        _measure_handle(cast("_Wrapped", wrapped).hypothesis, before, after)
+        return wrapped
+
+    # Scoped runtime interception: unittest builds the @given wrapper lazily.
+    # Explicit parameter types above preserve the pinned factory calling contract.
+    patch = pytest.MonkeyPatch()
+    patch.setattr(stateful, "get_state_machine_test", measured_factory)
+    return patch.undo

@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from dataclasses import asdict, dataclass, field
 from functools import partial
@@ -12,12 +13,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, override
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
 import pytest
 from hypothesis import is_hypothesis_test
 
-from hypothesis_bridge import ShrinkEvidence, bind_target, unpack_token
+from hypothesis_bridge import (
+    Evaluation,
+    ShrinkEvidence,
+    bind_target,
+    instrument_ordinary,
+    unpack_token,
+)
 from monitor import BranchMonitor
 
 
@@ -42,6 +49,7 @@ class CaseResult:
     verification: str = "pending"
     database_replay: bool = False
     features: tuple[str, ...] = ()
+    elapsed_ns: int = 0
 
 
 @dataclass
@@ -65,6 +73,8 @@ class CaseDriver(Protocol):
         """Consume a case outcome before the next candidate is requested."""
         ...
 
+
+MAX_RETAINED_CASES = 256
 
 FIXTURE_EVENTS = pytest.StashKey[list[tuple[str, str]]]()
 
@@ -181,14 +191,25 @@ class _Session:
                 raw = self.driver.next_case(item.nodeid) if self.driver else next(fixed, None)
                 if raw is None:
                     return
+                started = time.perf_counter_ns()
                 if monitor:
                     monitor.start_case()
                 try:
                     evaluated = target.check(raw)
                 finally:
                     features = monitor.finish_case() if monitor else ()
-                case = CaseResult(item.nodeid, **vars(evaluated), features=features)
-                self.evidence.cases.append(case)
+                case = CaseResult(
+                    item.nodeid,
+                    **vars(evaluated),
+                    features=features,
+                    elapsed_ns=time.perf_counter_ns() - started,
+                )
+                if (
+                    self.driver is None
+                    or len(self.evidence.cases) < MAX_RETAINED_CASES
+                    or case.kind == "failure"
+                ):
+                    self.evidence.cases.append(case)
                 if self.driver:
                     self.driver.observe(case)
                 if case.kind == "failure":
@@ -317,3 +338,59 @@ if __name__ == "__main__":
     # as the bootstrap, rather than a second import under a different name.
     sys.modules["adapter"] = sys.modules[__name__]
     _replay_main()
+
+
+class _OrdinarySession:
+    """Measure the normal pytest/Hypothesis path without replacing its run loop."""
+
+    def __init__(self, before: Callable[[str], None], after: Callable[[CaseResult], None]) -> None:
+        self.before = before
+        self.after = after
+        self.excluded: tuple[Path, ...] = ()
+        self.items: list[pytest.Item] = []
+
+    def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
+        self.items = items
+        self.excluded = tuple(item.path for item in items)
+
+    @pytest.hookimpl(wrapper=True, trylast=True)
+    def pytest_runtest_call(self, item: pytest.Item) -> Generator[None]:
+        if not isinstance(item, pytest.Function) or not is_hypothesis_test(item.obj):
+            yield
+            return
+        monitor = BranchMonitor((item.config.rootpath,), excluded=self.excluded)
+        started = 0
+
+        def before() -> None:
+            nonlocal started
+            self.before(item.nodeid)
+            started = time.perf_counter_ns()
+            monitor.start_case()
+
+        def after(evaluated: Evaluation) -> None:
+            features = monitor.finish_case()
+            self.after(
+                CaseResult(
+                    item.nodeid,
+                    **vars(evaluated),
+                    features=features,
+                    elapsed_ns=time.perf_counter_ns() - started,
+                )
+            )
+
+        restore = instrument_ordinary(item, before, after)
+        try:
+            yield
+        finally:
+            restore()
+            monitor.close()
+
+
+def run_ordinary(
+    pytest_args: list[str], before: Callable[[str], None], after: Callable[[CaseResult], None]
+) -> tuple[int, list[str]]:
+    """Run unchanged Hypothesis generation/shrinking with measurement callbacks."""
+    plugin = _OrdinarySession(before, after)
+    code = pytest.main(pytest_args, plugins=[plugin])
+    statistics = [getattr(item, "hypothesis_statistics", "") for item in plugin.items]
+    return int(code), [text for text in statistics if isinstance(text, str) and text]

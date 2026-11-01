@@ -92,3 +92,12 @@ and the user-site build, and retains the generated HTML for review.
 Release automation, package publishing, and deployment are deferred. Branch
 protection and repository settings are not changed by these files; configure
 required checks after the workflows have run on GitHub.
+
+## Feasibility experiments
+
+The [guided discovery audit](knowledge/guided-discovery-audit.md) records the
+isolated Rust/Python prototype, actual native observations and remaining gates.
+Use the [implementation plan](work/coverage-guided-python-fuzzing/feasibility-plan.md)
+and [experimental workflow](../../.github/workflows/fuzzing-feasibility.yml) for
+its separate lockfiles and commands. These experiments do not install a product
+CLI or establish platform support merely by configuring the matrix.

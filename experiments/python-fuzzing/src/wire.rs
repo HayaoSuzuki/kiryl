@@ -55,6 +55,12 @@ pub fn decode(bytes: &[u8]) -> io::Result<Value> {
 /// # Errors
 /// Reports serialization, size, or stream failures before acknowledgment.
 pub fn write(writer: &mut impl Write, mut value: Value) -> io::Result<()> {
+    if !value.is_object() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame must be an object",
+        ));
+    }
     value["version"] = 1.into();
     let bytes = serde_json::to_vec(&value)?;
     let size = u32::try_from(bytes.len())

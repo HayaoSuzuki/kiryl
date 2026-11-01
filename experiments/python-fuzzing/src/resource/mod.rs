@@ -182,7 +182,7 @@ pub fn attach(
     match native_attach(worker, limits) {
         Ok(guard) => Ok(guard),
         Err(error) if allow_best_effort => Ok(Guard {
-            backend: Backend::Portable(portable::Group::new(worker.id(), error.to_string())),
+            backend: Backend::Portable(portable::Group::attach(worker.id(), error.to_string())?),
             terminated: false,
         }),
         Err(error) => Err(error),

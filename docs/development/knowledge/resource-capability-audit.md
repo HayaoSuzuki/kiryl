@@ -6,12 +6,10 @@ status: draft
 sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
-  working_tree: modified
-  sha256: 4242f728ef9038337e4f374d237f3177acb5d0220ba51f68a0d2048ffc42e573
+  revision: 244ad44
 - id: resource
   resource: ../../../experiments/python-fuzzing/src/resource/mod.rs
-  working_tree: untracked
-  sha256: 5b295ed80c864d19951e051ebf8b88305a8b5dd25bdbd73b3925bffe7889734e
+  revision: 244ad44
 - id: msvc
   resource: https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort
   accessed: '2026-11-01'

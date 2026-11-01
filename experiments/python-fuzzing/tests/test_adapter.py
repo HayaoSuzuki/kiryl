@@ -128,3 +128,33 @@ def test_unsupported_hypothesis_version_is_infrastructure(
     assert [case.kind for case in evidence.cases] == ["infrastructure"]
     assert evidence.cases[0].rendered is not None
     assert "unsupported Hypothesis" in evidence.cases[0].rendered
+
+
+def test_async_property_is_explicitly_unsupported(tmp_path: Path) -> None:
+    """Deferred async support cannot masquerade as a successful/failing sync oracle."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_async.py").write_text(
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.just(0))\nasync def test_async(value):\n    assert False\n"
+    )
+    evidence = run_session([str(tmp_path), "-q"], [Invocation("test_async.py::test_async", (b"",))])
+    assert evidence.cases[0].kind == "infrastructure"
+    assert "async" in (evidence.cases[0].rendered or "")
+
+
+@pytest.mark.parametrize("exception", ["InvalidArgument", "FailedHealthCheck"])
+def test_hypothesis_configuration_exception_is_infrastructure(
+    tmp_path: Path, exception: str
+) -> None:
+    """Framework configuration errors cannot become application counterexamples."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / f"test_cfg_{exception}.py").write_text(
+        "from hypothesis import given, strategies as st\n"
+        f"from hypothesis.errors import {exception}\n"
+        "@given(st.just(0))\ndef test_configuration(value):\n"
+        f"    raise {exception}('synthetic framework error')\n"
+    )
+    evidence = run_session(
+        [str(tmp_path), "-q"], [Invocation(f"test_cfg_{exception}.py::test_configuration", (b"",))]
+    )
+    assert evidence.cases[0].kind == "infrastructure"
