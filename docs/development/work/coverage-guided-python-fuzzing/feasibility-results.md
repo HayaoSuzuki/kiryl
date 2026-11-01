@@ -564,3 +564,51 @@ Correction source snapshots (working tree after `bda2133`):
 | `tests/test_controller.py` | `1547fa546ea310a7a001716122def8468e31babf0b0c31a9bf83d9830aa9c515` |
 | `tests/test_skips.py` | `2695c272c33ebf257f9ef30a05b2c161d74f5efd00ee40ca0f66992953a2defb` |
 | `tests/test_search_evidence.py` | `2f9b137dbfcca0028aaf7408c1b15ec3e9082278f1fd2860e1dfa75aed3a8458` |
+
+
+## First native CI matrix and Linux crash-reporting correction
+
+[The first PR matrix](https://github.com/HayaoSuzuki/kiryl/actions/runs/41288834685)
+ran at `adc7845c4c0696ed1b426a308d0e2270672f8322`. Both macOS and both Windows
+jobs passed their behavioral probes and fixed-seed comparisons; the separate Lean
+job passed. Both Linux jobs failed the same original crash regression: abort was
+observed as `case_timeout` instead of `native_crash` within the one-second case
+limit (108 other tests passed, three hard-backend gates skipped per interpreter).
+These native failures supersede the earlier cross-compilation-only observation
+without establishing their underlying kernel timing by themselves.
+
+The existing no-core policy used `RLIMIT_CORE=0`. Linux documents that piped core
+handlers ignore that limit. The worker now additionally sets `PR_SET_DUMPABLE=0`
+after resource attachment and before site/target imports. This is a per-worker
+policy; no host sysctl is changed. Core-handler delay is the tested causal
+hypothesis for the first-abort-only failure; a subsequent native matrix must
+confirm the correction. Non-dumpability also restricts ptrace attachment and
+changes permissions for some process metadata, so debugging that requires those
+facilities remains outside this experiment's default bootstrap policy.
+See [core(5)](https://www.man7.org/linux/man-pages/man5/core.5.html) and
+[PR_SET_DUMPABLE](https://www.man7.org/linux/man-pages/man2/PR_SET_DUMPABLE.2const.html).
+
+Five checks for this correction cover the two matching native failure logs,
+ctypes ABI widths/return/errno handling, post-attachment/pre-import placement,
+explicit infrastructure failure when the policy cannot be applied, and complete
+regressions/provenance. The new Linux-only probe requires the target to observe
+`PR_GET_DUMPABLE=0` and confirms fresh abort replay under a 500 ms case limit.
+Local ABI/error tests fail before the implementation and pass after it; local
+macOS cannot execute the Linux syscall probe.
+
+After the Linux bootstrap correction, native macOS CPython 3.14.9 and 3.15.2
+each passed 111 tests with four skips (three hard-backend gates and the new
+Linux-only probe). Strict Ruff/format/ty and documentation checks passed.
+
+First-matrix JUnit totals (observed at `adc7845`):
+
+| Cell | Tests | Failures/errors | Skips |
+| --- | --- | --- | --- |
+| `macos-latest-python-3.14` | 112 | 0 | 3 |
+| `macos-latest-python-3.15` | 112 | 0 | 3 |
+| `ubuntu-latest-python-3.14` | 112 | 1 | 3 |
+| `ubuntu-latest-python-3.15` | 112 | 1 | 3 |
+| `windows-latest-python-3.14` | 112 | 0 | 5 |
+| `windows-latest-python-3.15` | 112 | 0 | 5 |
+
+Linux correction source: `worker.py` SHA-256 `ba25bf429d0f54cc5c4362007c5dc58661ba9e430b0d60f916974a456838eff5`.

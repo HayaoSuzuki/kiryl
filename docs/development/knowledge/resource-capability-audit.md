@@ -16,6 +16,12 @@ sources:
 - id: jobs
   resource: https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
   accessed: '2026-11-01'
+- id: dumpable
+  resource: https://www.man7.org/linux/man-pages/man2/PR_SET_DUMPABLE.2const.html
+  accessed: '2026-11-01'
+- id: core
+  resource: https://www.man7.org/linux/man-pages/man5/core.5.html
+  accessed: '2026-11-01'
 ---
 # Capability contract and observations
 
@@ -46,6 +52,11 @@ Their delivery is not guaranteed; absence is not evidence that no limit event
 occurred. Complete OOM classification remains open until native probes and
 notification-limit/violation-query handling resolve that gap.[^jobs]
 
+Linux workers additionally disable dumpability after attachment, before target
+imports, because RLIMIT_CORE does not exclude piped core handlers. This changes
+ptrace/process-metadata access and remains a disclosed experimental bootstrap
+policy; it changes no host-wide settings.[^dumpable][^core]
+
 Product import policy, resource backends and compatibility remain open. The probe
 ignores PYTHONPATH/user-site startup configuration; it does not establish hostile
 process containment. Reconsider after native runs, namespace/delegation changes,
@@ -56,3 +67,7 @@ Windows assignment/notification changes, or any altered startup sequence.[^resul
 [^msvc]: [Microsoft CRT abort behavior](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort).
 
 [^jobs]: [Microsoft Job Objects notification guarantees](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+[^dumpable]: [Linux per-process dumpability policy](https://www.man7.org/linux/man-pages/man2/PR_SET_DUMPABLE.2const.html).
+
+[^core]: [Linux core limits and piped handlers](https://www.man7.org/linux/man-pages/man5/core.5.html).

@@ -597,3 +597,30 @@ def test_early_done(value):
     assert code == 2  # noqa: PLR2004 -- infrastructure failure
     assert report["outcomes"][0]["kind"] == "infrastructure"
     assert report["outcomes"][0]["original"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux per-worker dumpability")
+def test_linux_worker_disables_piped_core_handlers(
+    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+) -> None:
+    """The attached target observes PR_GET_DUMPABLE=0 before a native crash."""
+    target = process_project / "test_process.py"
+    target.write_text(
+        target.read_text()
+        + """
+@given(st.just(1))
+def test_dump_policy(value):
+    import ctypes
+    from pathlib import Path
+    library = ctypes.CDLL(None)
+    assert library.prctl(3, 0, 0, 0, 0) == 0
+    Path("dump-policy.txt").write_text("disabled")
+    os.abort()
+"""
+    )
+    code, report = probe_run(("dump_policy",), case_ms=500)
+    assert code == 1
+    assert (process_project / "dump-policy.txt").read_text() == "disabled"
+    finding = report["outcomes"][0]
+    assert finding["kind"] == "native_crash"
+    assert finding["verification"] == "confirmed"

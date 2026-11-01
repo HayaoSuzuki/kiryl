@@ -65,6 +65,18 @@ class Driver:
             raise ValueError(message)
 
 
+def disable_linux_core_dumps() -> None:
+    """Disable this worker's dumps, including piped handlers ignoring RLIMIT_CORE."""
+    import ctypes  # noqa: PLC0415 -- only after resource attachment
+
+    library = ctypes.CDLL(None, use_errno=True)
+    prctl = library.prctl
+    prctl.argtypes = (ctypes.c_int,) + (ctypes.c_ulong,) * 4
+    prctl.restype = ctypes.c_int
+    if prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE, SUID_DUMP_DISABLE
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE)")
+
+
 def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
     """Redirect FD-level stdout before importing pytest or target modules."""
     control = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
@@ -100,6 +112,8 @@ def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
         abort_behavior.argtypes = (ctypes.c_uint, ctypes.c_uint)
         abort_behavior.restype = ctypes.c_uint
         abort_behavior(0, 3)
+    if sys.platform == "linux":
+        disable_linux_core_dumps()
     site.main()
     return control, request
 
