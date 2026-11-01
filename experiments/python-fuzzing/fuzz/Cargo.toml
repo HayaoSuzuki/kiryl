@@ -1,0 +1,37 @@
+[package]
+name = "fuzz-probe-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Elastic-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+fuzz-probe = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "wire"
+path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tail"
+path = "fuzz_targets/tail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "search"
+path = "fuzz_targets/search.rs"
+test = false
+doc = false
+bench = false

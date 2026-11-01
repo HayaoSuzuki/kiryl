@@ -1,0 +1,44 @@
+[project]
+name = "kiryl-fuzzing-feasibility"
+version = "0.0.0"
+requires-python = ">=3.14,<3.16"
+dependencies = ["hypothesis==6.170.13", "pytest==9.2.0"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+# Pick one docstring convention and let the formatter own trailing commas.
+ignore = ["D203", "D213", "COM812"]
+
+[tool.ruff.lint.per-file-ignores]
+# Assertions are the test oracle; pytest discovers this non-package directory.
+"tests/*.py" = ["S101", "INP001"]
+# Planted comparison properties intentionally assert defects; not normal discovery.
+"specimens/*.py" = ["S101", "INP001"]
+# These flat modules form a standalone, unpublished experiment, not a package.
+"*.py" = ["INP001"]
+# Approved version-pinned Hypothesis compatibility boundary only.
+"hypothesis_bridge.py" = ["INP001", "SLF001"]
+
+[tool.ty.rules]
+all = "error"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[dependency-groups]
+dev = [
+    "pytest-cov==7.1.0",
+    "ruff==0.17.3",
+    "ty==0.0.95",
+]
