@@ -6,12 +6,10 @@ status: draft
 sources:
 - id: results
   resource: ../work/coverage-guided-python-fuzzing/feasibility-results.md
-  working_tree: modified
-  sha256: ed46eebc80d34213c2801e38bcc6c297d77cca6db0a5de4c5a4a6b2b13ddf46a
+  revision: 962198c
 - id: controller
   resource: ../../../experiments/python-fuzzing/src/controller.rs
-  working_tree: untracked
-  sha256: b29c9ff68fea2dc60fbec6fef393adbde54fa21b41380d7495513d394eb120ca
+  revision: 962198c
 ---
 # Observed behavior
 

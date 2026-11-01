@@ -47,7 +47,7 @@ class Report(TypedDict):
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "target/debug/fuzz-probe"
+BINARY = ROOT / "target/debug" / ("fuzz-probe.exe" if os.name == "nt" else "fuzz-probe")
 
 
 @pytest.fixture
@@ -80,6 +80,14 @@ def test_close_control(value):
     time.sleep(2)
 
 @given(st.integers(0, 255))
+def test_wrong_id(value):
+    import json
+    import struct
+    encoded = json.dumps({"version": 1, "kind": "result", "case_id": 999,
+        "observation": {"nodeid": "test_process.py::test_wrong_id", "kind": "pass"}}).encode()
+    os.write(3, struct.pack(">I", len(encoded)) + encoded)
+
+@given(st.integers(0, 255))
 def test_corrupt(value):
     # Deliberate trusted-bootstrap protocol fault, not a sandbox escape test.
     os.write(3, bytes([255]) * 4)
@@ -107,9 +115,14 @@ def test_shrink_crash(value):
         os.abort()
     assert value < 2
 
+@pytest.fixture
+def slow_teardown():
+    yield
+    time.sleep(5)
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.integers(0, 255))
-def test_setup_wait(value):
-    time.sleep(0.1)
+def test_setup_wait(slow_teardown, value):
     assert False
 
 @given(st.integers(0, 255))
@@ -136,13 +149,15 @@ def probe_run(process_project: Path) -> Callable[..., tuple[int, Report]]:
     """Run a bounded real parent with a separate output namespace each time."""
     serial = 0
 
-    def run(
+    def run(  # noqa: PLR0913 -- explicit independent process-probe limit overrides
         names: tuple[str, ...],
         *,
         campaign_ms: int | None = 5000,
         case_ms: int = 1000,
         slice_ms: int = 1000,
         inputs: tuple[bytes, ...] = (b"\x08",),
+        allow_best_effort: bool = True,
+        memory_bytes: int = 1 << 30,
     ) -> tuple[int, Report]:
         nonlocal serial
         serial += 1
@@ -159,7 +174,8 @@ def probe_run(process_project: Path) -> Callable[..., tuple[int, Report]]:
                 "case_ms": case_ms,
                 "slice_ms": slice_ms,
                 "retained_output_bytes": 1024,
-                "allow_best_effort": True,
+                "allow_best_effort": allow_best_effort,
+                "tree_memory_bytes": memory_bytes,
             },
             "seed": 0,
         }
@@ -290,12 +306,13 @@ def test_exhausted_budget_preserves_pending_original(
     probe_run: Callable[..., tuple[int, Report]],
 ) -> None:
     """A replay terminated by the total deadline leaves the original pending."""
-    code, report = probe_run(("setup_wait",), campaign_ms=400)
+    code, report = probe_run(("setup_wait",), campaign_ms=3000)
     assert code == 1
     finding = report["outcomes"][0]
     assert finding["original"]
     assert Path(finding["original"]).exists()
     assert finding["verification"] == "pending"
+    assert report["outcomes"][-1]["kind"] == "campaign_cancelled"
 
 
 def test_setup_failure_is_infrastructure(probe_run: Callable[..., tuple[int, Report]]) -> None:
@@ -331,3 +348,15 @@ def test_pytest_fail_is_an_oracle_failure(probe_run: Callable[..., tuple[int, Re
     assert code == 1
     assert report["outcomes"][0]["kind"] == "failure"
     assert report["outcomes"][0]["verification"] == "confirmed"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="trusted POSIX descriptor fault injection")
+def test_invalid_result_still_keeps_active_input(
+    probe_run: Callable[..., tuple[int, Report]],
+) -> None:
+    """Correlation validation must complete before the parent releases its buffer."""
+    code, report = probe_run(("wrong_id",))
+    assert code == 2  # noqa: PLR2004 -- documented infrastructure exit
+    outcome = report["outcomes"][0]
+    assert outcome["kind"] == "infrastructure"
+    assert json.loads(Path(outcome["original"]).read_text())["input"] == [8]

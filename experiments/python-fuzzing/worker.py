@@ -66,6 +66,19 @@ def main() -> None:
     if request["kind"] != "start":
         message = "session was not acknowledged"
         raise ValueError(message)
+    import site  # noqa: PLC0415 -- load environment only after resource attachment
+
+    if sys.platform == "win32":
+        import ctypes  # noqa: PLC0415 -- Windows CRT setup after resource attachment
+
+        ctypes.WinDLL("kernel32").SetErrorMode(0x0001 | 0x0002 | 0x8000)
+        # MSVC abort without report-fault/dialog behavior exits with code 3.
+        # https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort
+        abort_behavior = ctypes.CDLL("ucrtbase")._set_abort_behavior  # noqa: SLF001 -- documented CRT API
+        abort_behavior.argtypes = (ctypes.c_uint, ctypes.c_uint)
+        abort_behavior.restype = ctypes.c_uint
+        abort_behavior(0, 3)
+    site.main()
     from adapter import Invocation, minimize, run_session, run_token  # noqa: PLC0415 -- after attachment
 
     nodeid = cast("str", request["test_id"])

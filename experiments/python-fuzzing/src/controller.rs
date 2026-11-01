@@ -1,6 +1,6 @@
 // Copyright (c) 2026 kiryl contributors
 //! One-worker probe: Rust owns input, time, persistence and bounded output.
-use crate::{artifacts::ArtifactStore, wire};
+use crate::{artifacts::ArtifactStore, resource, wire};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -156,12 +156,20 @@ struct Worker {
     events: Receiver<io::Result<Value>>,
     log: Arc<Mutex<LogTail>>,
     log_done: Receiver<()>,
+    resource: resource::Guard,
+    cleanup_error: Option<String>,
 }
 impl Worker {
     fn launch(config: &ProbeConfig) -> io::Result<Self> {
         let mut command = Command::new(&config.python);
         command
-            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("worker.py"))
+            .args([
+                "-I",
+                "-S",
+                "-c",
+                "import sys; sys.path.insert(0, sys.argv[1]); import worker; worker.main()",
+            ])
+            .arg(env!("CARGO_MANIFEST_DIR"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -172,6 +180,15 @@ impl Worker {
             command.process_group(0);
         }
         let mut child = command.spawn()?;
+        let resource =
+            match resource::attach(&mut child, &config.limits, config.limits.allow_best_effort) {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
+            };
         let input = child
             .stdin
             .take()
@@ -223,21 +240,16 @@ impl Worker {
             events,
             log,
             log_done,
+            resource,
+            cleanup_error: None,
         })
     }
     fn send(&mut self, value: Value) -> io::Result<()> {
         wire::write(&mut self.input, value)
     }
     fn terminate(&mut self) {
-        #[cfg(unix)]
-        {
-            if let Ok(pid) = i32::try_from(self.child.id()) {
-                // SAFETY: the worker is launched in its own process group. A negative
-                // nonzero PID addresses only that group, including its descendants.
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
+        if let Err(error) = self.resource.terminate_tree() {
+            self.cleanup_error = Some(error.to_string());
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -289,11 +301,10 @@ impl Controller {
         let start = Instant::now();
         let mut report = ProbeReport {
             version: 1,
-            capabilities: json!({"tree_memory_hard": false,
-            "tree_cleanup": cfg!(unix), "backend": "portable", "reason": "hard memory backend pending"}),
+            capabilities: serde_json::to_value(resource::detect()).map_err(io::Error::from)?,
             ..ProbeReport::default()
         };
-        if !config.limits.allow_best_effort {
+        if !config.limits.allow_best_effort && report.capabilities["tree_memory_hard"] != true {
             report.outcomes.push(Outcome {
                 test_id: String::new(),
                 case_id: 0,
@@ -319,7 +330,11 @@ impl Controller {
                 )?;
                 offset += result.consumed;
                 if let Some(observed) = result.observation {
-                    let index = report.outcomes.len() - 1;
+                    let index = report
+                        .outcomes
+                        .iter()
+                        .rposition(|o| o.original == result.original && o.kind == observed.kind)
+                        .unwrap_or_else(|| report.outcomes.len().saturating_sub(1));
                     if observed.kind == "failure"
                         && let (Some(token), Some(original)) =
                             (&observed.replay_token, &result.original)
@@ -383,7 +398,12 @@ impl Controller {
                             &mut store,
                             &mut report,
                         )?;
-                        let status = if verification.observation.as_ref().is_some_and(|v| {
+                        let status = if verification.observation.as_ref().is_none_or(|v| {
+                            ["campaign_cancelled", "interrupted", "infrastructure"]
+                                .contains(&v.kind.as_str())
+                        }) {
+                            "pending"
+                        } else if verification.observation.as_ref().is_some_and(|v| {
                             v.kind == observed.kind
                                 && (v.kind != "native_crash" || v.rendered == observed.rendered)
                         }) {
@@ -432,7 +452,28 @@ impl Controller {
         store: &mut ArtifactStore,
         report: &mut ProbeReport,
     ) -> Result<RunResult, ProbeError> {
-        let mut worker = Worker::launch(config)?;
+        let mut worker = match Worker::launch(config) {
+            Ok(worker) => worker,
+            Err(error) => {
+                let observation = infrastructure(&format!("worker/resource setup: {error}"));
+                report.outcomes.push(Outcome {
+                    test_id: invocation.test_id.clone(),
+                    case_id: 0,
+                    kind: observation.kind.clone(),
+                    original: None,
+                    derived: vec![],
+                    verification: "pending".into(),
+                });
+                return Ok(RunResult {
+                    observation: Some(observation),
+                    original: None,
+                    consumed: 0,
+                    derived: vec![],
+                });
+            }
+        };
+        report.capabilities =
+            serde_json::to_value(worker.resource.capabilities()).map_err(io::Error::from)?;
         let mut consumed = 0;
         let mut active: Option<(u64, Vec<u8>, Instant)> = None;
         let mut observed = None;
@@ -442,6 +483,7 @@ impl Controller {
 
         let mut ready = false;
         let mut closed_at = None;
+        let mut resource_check = Instant::now();
         loop {
             let interruption = self.interrupted.load(Ordering::Relaxed);
             let campaign_expired = config
@@ -458,6 +500,24 @@ impl Controller {
                     ..Observation::default()
                 });
                 break;
+            }
+            if active.is_some() && resource_check.elapsed() >= Duration::from_millis(20) {
+                resource_check = Instant::now();
+                match worker.resource.oom_observed() {
+                    Ok(true) => {
+                        observed = Some(Observation {
+                            kind: "oom".into(),
+                            verification: "pending".into(),
+                            ..Observation::default()
+                        });
+                        break;
+                    }
+                    Ok(false) => (),
+                    Err(error) => {
+                        observed = Some(infrastructure(&format!("resource evidence: {error}")));
+                        break;
+                    }
+                }
             }
             match worker.events.recv_timeout(Duration::from_millis(2)) {
                 Ok(Ok(message)) => {
@@ -490,6 +550,7 @@ impl Controller {
                             }
                             if slice_start.get_or_insert_with(Instant::now).elapsed()
                                 >= Duration::from_millis(config.limits.slice_ms)
+                                || observed.is_some()
                                 || offset + consumed >= invocation.inputs.len()
                                 || (mode == "raw_replay" && consumed >= 1)
                             {
@@ -507,11 +568,14 @@ impl Controller {
                             }
                         }
                         "result" if ready && mode != "minimize" => {
-                            let Some((id, input, _)) = active.take() else {
+                            let Some((id, input, _)) = active.as_ref() else {
                                 observed = Some(infrastructure("result without active case"));
                                 break;
                             };
-                            if message["case_id"].as_u64() != Some(id) {
+                            if message["case_id"].as_u64() != Some(*id)
+                                || message["observation"]["nodeid"].as_str()
+                                    != Some(&invocation.test_id)
+                            {
                                 observed = Some(infrastructure("case ID mismatch"));
                                 break;
                             }
@@ -521,7 +585,12 @@ impl Controller {
                                 observed = Some(infrastructure("malformed observation"));
                                 break;
                             };
-                            if !["pass", "reject", "failure"].contains(&value.kind.as_str()) {
+                            let mut value = value;
+                            if worker.resource.oom_observed()? {
+                                value.kind = "oom".into();
+                            }
+                            if !["pass", "reject", "failure", "oom"].contains(&value.kind.as_str())
+                            {
                                 observed = Some(infrastructure("unknown observation"));
                                 break;
                             }
@@ -531,18 +600,20 @@ impl Controller {
                                 } else {
                                     report.useful += 1;
                                 }
-                                if value.kind == "failure" {
+                                if ["failure", "oom"].contains(&value.kind.as_str()) {
                                     original = Some(
                                         store
-                                            .record_original(&invocation.test_id, &input, &value)
+                                            .record_original(&invocation.test_id, input, &value)
                                             .map_err(ProbeError::Storage)?,
                                     );
                                     observed = Some(value.clone());
                                 }
-                                if report.outcomes.len() < 256 || value.kind == "failure" {
+                                if report.outcomes.len() < 256
+                                    || ["failure", "oom"].contains(&value.kind.as_str())
+                                {
                                     report.outcomes.push(Outcome {
                                         test_id: invocation.test_id.clone(),
-                                        case_id: id,
+                                        case_id: *id,
                                         kind: value.kind.clone(),
                                         original: original.clone(),
                                         derived: vec![],
@@ -552,6 +623,7 @@ impl Controller {
                             } else {
                                 observed = Some(value);
                             }
+                            active = None;
                             worker.send(json!({"kind": "ack"}))?;
                         }
                         "candidate" if ready && mode == "minimize" => {
@@ -595,6 +667,18 @@ impl Controller {
                         thread::sleep(Duration::from_millis(1));
                         continue;
                     }
+                    if observed.is_none() && worker.resource.oom_observed()? {
+                        observed = Some(Observation {
+                            kind: if active.is_some() {
+                                "oom"
+                            } else {
+                                "infrastructure"
+                            }
+                            .into(),
+                            verification: "pending".into(),
+                            ..Observation::default()
+                        });
+                    }
                     if observed.is_none() {
                         observed =
                             Some(if active.is_some() && status.is_some_and(native_failure) {
@@ -615,8 +699,19 @@ impl Controller {
         }
         worker.terminate();
         report.logs.push(worker.take_log());
+        if let Some(error) = &worker.cleanup_error {
+            report.outcomes.push(Outcome {
+                test_id: invocation.test_id.clone(),
+                case_id: 0,
+                kind: "infrastructure".into(),
+                original: None,
+                derived: vec![],
+                verification: format!("cleanup failed: {error}"),
+            });
+        }
         if let Some(value) = &observed {
-            let failure = !["pass", "reject", "failure"].contains(&value.kind.as_str());
+            let failure = !(["pass", "reject", "failure"].contains(&value.kind.as_str())
+                || value.kind == "oom" && original.is_some());
             if mode == "minimize"
                 && let Some((_, candidate, _)) = &active
             {
@@ -650,6 +745,12 @@ impl Controller {
         })
     }
 }
+#[cfg(any(windows, test))]
+fn windows_abnormal_exit(code: i32) -> bool {
+    // CRT abort is exit 3 after bootstrap disables dialogs/report-fault. This
+    // candidate is inherently indistinguishable from an explicit exit(3).
+    code == 3 || code < 0
+}
 fn native_failure(status: std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
@@ -658,7 +759,7 @@ fn native_failure(status: std::process::ExitStatus) -> bool {
     }
     #[cfg(windows)]
     {
-        status.code().is_some_and(|code| code < 0)
+        status.code().is_some_and(windows_abnormal_exit)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -670,6 +771,7 @@ fn infrastructure(message: &str) -> Observation {
     Observation {
         kind: "infrastructure".into(),
         rendered: Some(message.into()),
+        verification: "pending".into(),
         ..Observation::default()
     }
 }
@@ -701,6 +803,13 @@ mod tests {
             .unwrap_or("running");
             assert_eq!(expected, fields[3]);
         }
+    }
+    #[test]
+    fn windows_abnormal_exit_table_is_candidate_evidence_only() {
+        assert!(windows_abnormal_exit(3));
+        assert!(windows_abnormal_exit(-1_073_741_819));
+        assert!(!windows_abnormal_exit(7));
+        assert!(!windows_abnormal_exit(0));
     }
     #[test]
     fn precedence() {

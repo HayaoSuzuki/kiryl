@@ -298,9 +298,92 @@ Task 4 source snapshots (working tree after `624775b`):
 | `formal/BudgetModel.lean` | `34f0833a5a90ba9ea4bc6f6d35ecfd066b5674d438da42460eaafb8c022d822d` |
 | `formal/budget-cases.tsv` | `5d7a08608b54635f2dcd423a57423c358224827c10ec1eec152a71fcc7a7aba8` |
 
+## Task 5: Resource capabilities and startup ordering
+
+Native macOS arm64 CPython 3.14.9/3.15.2 each passed 55 tests with two explicit
+hard-backend skips. Rust passed ten tests. The experiment does not have a macOS
+hard memory backend: default runs refuse before collection; explicit best effort
+reports `tree_memory_hard=false`, `tree_cleanup=false`, and a concrete reason.
+Ordinary inheriting descendants are killed with their process group. Detached
+descendants are outside that guarantee. Task 4's cleanup flag described ordinary
+group cleanup and was too strong as a containment claim; this stage corrects it.
+
+The controller originally allowed PYTHONPATH startup hooks before attachment.
+A failing synthetic sitecustomize regression led to an isolated `-I -S` bootstrap.
+Only after resource assignment and the start acknowledgment does it initialize
+site packages and import pytest/targets. This experiment intentionally ignores
+PYTHONPATH and user-site startup configuration; install dependencies into the
+chosen interpreter or use pytest's own path configuration. Product import policy
+remains a follow-on decision. This is process ownership, not a security sandbox.
+
+Linux cgroup v2 support resolves current unified membership/mounts, creates an
+owned group, opens existing kernel control files, verifies the effective memory
+limit, enables group OOM handling, probes empty-group kill permission, and assigns
+the worker before acknowledgment. A real sleeping-child probe checks assignment
+and cleanup permissions. Without writable delegation it fails closed or explicitly
+falls back. The backend never changes an existing group's limits or enables
+controllers in a shared parent. `memory.events` oom_kill evidence, not an arbitrary
+signal, establishes an observed OOM. Unsupported namespace mapping fails closed.
+
+Windows Job Objects configure aggregate job memory, kill-on-close and a completion
+port before assignment. The capability probe assigns a trusted OS child and
+checks cleanup. Memory-limit notifications supply backend provenance. The worker
+suppresses CRT dialogs/report-fault before site initialization. Microsoft's
+[abort contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/abort)
+explains that without reporting, abort can terminate with code 3. Such a status is
+an ambiguous native-crash candidate: an explicit exit(3) is indistinguishable.
+Fresh reproduction confirms the same abnormal outcome, not its native cause.
+Other positive exit codes remain infrastructure. Native Windows observations
+are still required to accept this mechanism.
+
+The mechanisms were informed by hoimin's fixed
+[resource sources](https://github.com/HayaoSuzuki/hoimin/tree/542ec59c002d72fdff0137aa90113ffa59d70844/crates/hoimin-cli/src/resource)
+under Elastic-2.0, read through gh. This synchronous probe does not import its
+run-wide resource framework. Rust checks for x86_64-unknown-linux-gnu and
+x86_64-pc-windows-gnu passed with Clippy all/pedantic and warnings denied. Cross
+compilation establishes type compatibility only; it does not prove enforcement.
+
+| Self-review | Finding/action and evidence |
+| --- | --- |
+| 1: contract/startup | Real hook initially executed before attachment; isolated bootstrap regression RED to GREEN; unavailable hard-cap default refusal precedes target marker |
+| 2: boundaries/capabilities | Corrected portable containment flag; ordinary descendant cleanup, timeout flood, unrelated exit provenance; native-only aggregate/setup memory tests explicitly skipped locally |
+| 3: state/ownership | Cleanup authority consumed before failure; actual Guard correspondence and detected retry-on-error mutation. Correlation validates before releasing raw input. Mixed finding/cancellation regression RED to GREEN |
+| 4: native APIs | Reviewed fixed upstream cgroup/Job mechanisms, write/assignment order, kernel notification provenance and cleanup failures; successful cross checks kept distinct from native evidence |
+| 5: design/evidence | One guard owns descendants; actual capability fields replace OS-name assumptions; strict Python/Rust checks, both local interpreters, documentation and source/license validation; unverified gates remain explicit |
+
+The cleanup model proves at most one OS attempt for arbitrarily many requests.
+Nine generated cases compare the actual Rust guard's failure consumption with
+an injected invalid PID that fails before sending any signal (`internal-fixture`).
+An intentionally moved consumption bit (after a fallible call) was detected;
+restoring the correct order returns green. This theorem and its fixtures do not
+prove cgroup/Job cleanup, PID scheduling, or operating-system calls. Real process
+tests separately check ordinary descendants and bounded drain after termination.
+
+A target finding followed by whole-budget expiry during teardown retains both
+outcome categories and its pending original. Result correlation now validates
+IDs/node IDs before relinquishing the active buffer; a malformed-ID fault retains
+exact bytes in an infrastructure record. Limit failures during setup carry no
+fabricated target input. Replay stopped by budget/infrastructure stays pending.
+
+Task 5 source snapshots (working tree after `962198c`):
+
+| Source | SHA-256 at observation |
+| --- | --- |
+| `src/resource/mod.rs` | `5b295ed80c864d19951e051ebf8b88305a8b5dd25bdbd73b3925bffe7889734e` |
+| `src/resource/linux.rs` | `e6ad3966b3165e37696e4a4e42f2df79af750a0ac5fe9b3be204635c631eb7ac` |
+| `src/resource/windows.rs` | `87366e796d911476d834fcfc957759ee00f01240dd6b1d6198a0139979ac1848` |
+| `src/resource/portable.rs` | `451058e868d5619f17503c6f5d6bb17cb44015df7d91e78e6d66ff643bed673e` |
+| `src/controller.rs` | `2029a3beb478f175056216a499857834d1efe5fa3f967a02793758ccba2551f4` |
+| `worker.py` | `7511e4534a0bbf8a540798240cfa175100bdf0831e24a1410494c1c8617de5c6` |
+| `tests/test_resource_probes.py` | `793c7eaa09fdb61e559eeaee96cc1aedfa247eccdd521517c604367ec9a4bbed` |
+| `tests/test_controller.py` | `1fbdf097bbfa91a4d8f48a48c5bab0b0a350a66e0f6846f2043f3eceb12c1e4a` |
+| `formal/ResourceModel.lean` | `2ee9a138fcb63ba4473845ac334812ca15963aa8c6e20f0a0ea273673c41974f` |
+| `formal/resource-cases.tsv` | `a6abf5c676c978615f6e50ad126a8e9353f660214ff44d888b146416c37bff4c` |
+
 ## Remaining gates
 
-OS memory/descendant enforcement and coverage-guided discovery remain unverified.
-No native Linux/Windows result is inferred from the local supervision tests.
-Production engine choice and full platform acceptance remain open. The next
-experiments must measure actual capabilities and bounded guided discovery.
+Native Linux/Windows hard enforcement, independent concurrent allowances, and
+coverage-guided discovery remain unverified. The two local hard-backend skips
+leave those gates open; they are not passing observations. The next stage must
+measure discovery and obtain actual native evidence. Production adoption remains
+undecided; no matrix cell is completed by defining or compiling a workflow.
