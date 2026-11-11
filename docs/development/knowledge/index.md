@@ -31,3 +31,5 @@ implementation correctness or human review.
 
 Use the [documentation procedure](../documentation.md) to maintain this bundle
 and the [development guide](../index.md) to run checks.
+
+- [Test quality](test-quality.md): Independent cases, generated properties, strict Python checks and exact native coverage.

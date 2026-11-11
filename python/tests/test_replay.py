@@ -6,7 +6,8 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator  # noqa: TC003 -- pytest inspects annotations
-from pathlib import Path  # noqa: TC003 -- pytest fixture annotation introspection
+from operator import attrgetter
+from pathlib import Path
 
 import pytest
 from adapter import Invocation, minimize, replay, run_session
@@ -165,7 +166,7 @@ def test_ordinary_pytest_reuses_database(finding_project: Path, name: str) -> No
     )
     assert completed.returncode == 1
     assert "AssertionError" in completed.stdout
-    assert any(path.is_file() for path in (finding_project / "db").rglob("*"))
+    assert any(map(Path.is_file, (finding_project / "db").rglob("*")))
 
 
 def test_no_database_and_zero_budget(finding_project: Path) -> None:
@@ -281,7 +282,7 @@ def test_unittest_setup_and_teardown_are_preserved(finding_project: Path) -> Non
         [str(finding_project / "test_findings.py"), "-q"],
         [Invocation("test_findings.py::TestUnit::test_property", (b"",))],
     )
-    assert [case.kind for case in evidence.cases] == ["pass"]
+    assert list(map(attrgetter("kind"), evidence.cases)) == ["pass"]
     assert (finding_project / "unit_teardown").exists()
 
 
@@ -300,4 +301,4 @@ def test_measured_ordinary_path_reuses_original_database(finding_project: Path, 
     )
     assert code == 1
     assert started
-    assert any(case.kind == "failure" for case in observations)
+    assert "failure" in set(map(attrgetter("kind"), observations))

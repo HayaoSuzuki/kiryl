@@ -3,6 +3,7 @@
 
 import sys
 from collections.abc import Iterator  # noqa: TC003 -- fixture annotation
+from operator import attrgetter
 from pathlib import Path  # noqa: TC003 -- pytest fixture annotation introspection
 
 import pytest
@@ -82,8 +83,8 @@ def test_search_skip_is_explicit(skip_project: Path, name: str) -> None:
     """Every supported skip boundary yields one skipped invocation, never failure."""
     node = f"test_skip.py::test_{name}"
     evidence = run_session([str(skip_project), "-q"], [Invocation(node, (b"",))])
-    assert [case.kind for case in evidence.cases] == ["skip"]
-    assert all(case.replay_token is None for case in evidence.cases)
+    assert list(map(attrgetter("kind"), evidence.cases)) == ["skip"]
+    assert set(map(attrgetter("replay_token"), evidence.cases)) == {None}
 
 
 @pytest.mark.parametrize("name", ["unit", "pytest", "marked", "setup"])
@@ -94,7 +95,7 @@ def test_ordinary_skip_is_not_pass(skip_project: Path, name: str) -> None:
         [str(skip_project), "-q", "-k", f"test_{name}"], lambda _: None, observed.append
     )
     assert code == 0
-    assert [case.kind for case in observed] == ["skip"]
+    assert list(map(attrgetter("kind"), observed)) == ["skip"]
 
 
 @pytest.mark.parametrize(

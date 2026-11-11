@@ -197,24 +197,37 @@ pub fn attach(
 mod tests {
     use super::*;
     #[test]
-    fn cleanup_failure_consumes_authority_once_lean_correspondence() {
+    fn cleanup_correspondence_parameterization_covers_corpus() {
+        assert_eq!(
+            include_str!("../../formal/resource-cases.tsv")
+                .lines()
+                .count(),
+            9
+        );
+    }
+    #[rstest::rstest]
+    fn cleanup_failure_consumes_authority_once_lean_correspondence(
+        #[values(0, 1, 2, 3, 4, 5, 6, 7, 8)] row: usize,
+    ) {
         // internal-fixture: invalid PID fails conversion before any OS signal.
         // The observed Err counts attempts, independently of the guard state bit.
-        for line in include_str!("../../formal/resource-cases.tsv").lines() {
-            let fields: Vec<_> = line.split('\t').collect();
-            let requests: usize = fields[0].parse().unwrap();
-            let mut guard = Guard {
-                backend: Backend::Portable(portable::Group::new(
-                    u32::MAX,
-                    "injected invalid PID".into(),
-                )),
-                terminated: false,
-            };
-            let attempts = (0..requests)
-                .filter(|_| guard.terminate_tree().is_err())
-                .count();
-            assert_eq!(guard.terminated, fields[1] == "true");
-            assert_eq!(attempts, fields[2].parse::<usize>().unwrap());
-        }
+        let line = include_str!("../../formal/resource-cases.tsv")
+            .lines()
+            .nth(row)
+            .unwrap();
+        let fields: Vec<_> = line.split('\t').collect();
+        let requests: usize = fields[0].parse().unwrap();
+        let mut guard = Guard {
+            backend: Backend::Portable(portable::Group::new(
+                u32::MAX,
+                "injected invalid PID".into(),
+            )),
+            terminated: false,
+        };
+        let attempts = (0..requests)
+            .filter(|_| guard.terminate_tree().is_err())
+            .count();
+        assert_eq!(guard.terminated, fields[1] == "true");
+        assert_eq!(attempts, fields[2].parse::<usize>().unwrap());
     }
 }

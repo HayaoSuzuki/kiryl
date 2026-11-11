@@ -148,11 +148,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::milliseconds;
+    #[rstest::rstest]
+    fn reject_durations_below_clock_resolution(#[values("0.00001", "NaN", "-1")] input: &str) {
+        assert!(milliseconds(input).is_err());
+    }
     #[test]
-    fn reject_durations_below_clock_resolution() {
-        assert!(milliseconds("0.00001").is_err());
-        assert!(milliseconds("NaN").is_err());
-        assert!(milliseconds("-1").is_err());
+    fn accept_duration_at_clock_resolution() {
         assert_eq!(milliseconds("0.001").unwrap(), 1);
     }
 }

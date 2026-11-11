@@ -79,3 +79,57 @@ impl Drop for Group {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+
+    struct OwnedWorker(Child);
+    impl Drop for OwnedWorker {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn worker() -> OwnedWorker {
+        OwnedWorker(
+            Command::new("/bin/cat")
+                .process_group(0)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn attaching_an_unrepresentable_group_id_fails_before_starting_an_anchor() {
+        assert!(Group::attach(u32::MAX, "test".into()).is_err());
+    }
+
+    #[test]
+    fn terminating_an_unrepresentable_group_id_does_not_signal() {
+        assert!(Group::new(u32::MAX, "test".into()).terminate().is_err());
+    }
+
+    #[test]
+    fn dropping_a_live_group_reaps_its_owned_anchor() {
+        let worker = worker();
+        let group = Group::attach(worker.0.id(), "test".into()).unwrap();
+        let anchor = i32::try_from(group.anchor.as_ref().unwrap().id()).unwrap();
+        drop(group);
+        let mut status = 0;
+        // SAFETY: this is only a nonblocking wait for the anchor this test owned;
+        // the normal Drop must already have reaped it, yielding ECHILD.
+        assert_eq!(
+            unsafe { libc::waitpid(anchor, &raw mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+}

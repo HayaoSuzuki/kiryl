@@ -1077,7 +1077,6 @@ fn native_failure(status: std::process::ExitStatus) -> bool {
 fn poll_exit(child: &mut Child) -> io::Result<Option<std::process::ExitStatus>> {
     #[cfg(unix)]
     {
-        use std::os::unix::process::ExitStatusExt;
         // SAFETY: zero initializes a plain C output buffer. waitid populates a
         // SIGCHLD record; WNOWAIT keeps the root PID reserved until tree cleanup.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -1090,12 +1089,7 @@ fn poll_exit(child: &mut Child) -> io::Result<Option<std::process::ExitStatus>> 
             )
         } != 0
         {
-            let error = io::Error::last_os_error();
-            return if error.kind() == io::ErrorKind::Interrupted {
-                Ok(None)
-            } else {
-                Err(error)
-            };
+            return polling_error(io::Error::last_os_error());
         }
         // SAFETY: waitid returned successfully into the initialized SIGCHLD record.
         if unsafe { info.si_pid() } == 0 {
@@ -1103,18 +1097,37 @@ fn poll_exit(child: &mut Child) -> io::Result<Option<std::process::ExitStatus>> 
         }
         // SAFETY: nonzero child PID identifies an initialized child-status payload.
         let value = unsafe { info.si_status() };
-        let raw = match info.si_code {
-            libc::CLD_EXITED => (value & 0xff) << 8,
-            libc::CLD_KILLED => value & 0x7f,
-            libc::CLD_DUMPED => (value & 0x7f) | 0x80,
-            _ => return Err(io::Error::other("unexpected waitid notification")),
-        };
-        Ok(Some(std::process::ExitStatus::from_raw(raw)))
+        decode_unix_exit(info.si_code, value).map(Some)
     }
     #[cfg(not(unix))]
     {
         child.try_wait()
     }
+}
+
+/// Interrupted nonblocking notification polls remain pending; other OS failures
+/// retain their original diagnostic rather than looking like a live process.
+#[cfg(unix)]
+fn polling_error(error: io::Error) -> io::Result<Option<std::process::ExitStatus>> {
+    if error.kind() == io::ErrorKind::Interrupted {
+        Ok(None)
+    } else {
+        Err(error)
+    }
+}
+
+/// Translate the waitid SIGCHLD payload without reaping the process-group anchor.
+/// Only WEXITED notifications are admitted; raw status masks match waitpid ABI.
+#[cfg(unix)]
+fn decode_unix_exit(code: i32, value: i32) -> io::Result<std::process::ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+    let raw = match code {
+        libc::CLD_EXITED => (value & 0xff) << 8,
+        libc::CLD_KILLED => value & 0x7f,
+        libc::CLD_DUMPED => (value & 0x7f) | 0x80,
+        _ => return Err(io::Error::other("unexpected waitid notification")),
+    };
+    Ok(std::process::ExitStatus::from_raw(raw))
 }
 
 fn infrastructure(message: &str) -> Observation {
@@ -1286,35 +1299,576 @@ pub(crate) fn collect(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    #[cfg(unix)]
+    struct SessionFixture {
+        root: PathBuf,
+        config: ExecutionSettings,
+    }
+    #[cfg(unix)]
+    impl SessionFixture {
+        fn new(frames: &[Value]) -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "kiryl-worker-unit-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let frame_path = root.join("frames");
+            let mut bytes = Vec::new();
+            frames
+                .iter()
+                .try_for_each(|frame| wire::write(&mut bytes, frame.clone()))
+                .unwrap();
+            std::fs::write(&frame_path, bytes).unwrap();
+            let python = root.join("worker");
+            std::fs::write(
+                &python,
+                format!("#!/bin/sh\ncat '{}'\nsleep 60\n", frame_path.display()),
+            )
+            .unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let config = ExecutionSettings {
+                python,
+                pytest_args: vec![],
+                seed: 1,
+                output: root.join("artifacts"),
+                identity: json!({}),
+                limits: Limits {
+                    campaign_ms: Some(30_000),
+                    case_ms: 10_000,
+                    allow_best_effort: true,
+                    ..Limits::default()
+                },
+            };
+            Self { root, config }
+        }
+        fn sequenced(sessions: &[Vec<Value>]) -> Self {
+            use std::fmt::Write as _;
+            let fixture = Self::new(&[]);
+            sessions.iter().enumerate().for_each(|(index, frames)| {
+                let mut script = String::from("read_command() {\nset -- $(dd bs=1 count=4 2>/dev/null | od -An -tu1)\nlength=$(( $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 ))\ndd bs=1 count=\"$length\" of=/dev/null 2>/dev/null\n}\n");
+                frames.iter().enumerate().for_each(|(frame_index, frame)| {
+                    let path = fixture.root.join(format!("frame-{}-{frame_index}", index + 1));
+                    let mut bytes = Vec::new();
+                    wire::write(&mut bytes, frame.clone()).unwrap();
+                    std::fs::write(&path, bytes).unwrap();
+                    writeln!(script, "cat '{}'", path.display()).unwrap();
+                    if matches!(frame["kind"].as_str(), Some("ready" | "next" | "replay_case" | "candidate" | "result" | "skipped")) {
+                        script.push_str("read_command\n");
+                    }
+                });
+                script.push_str("sleep 60\n");
+                std::fs::write(fixture.root.join(format!("session-{}", index + 1)), script).unwrap();
+            });
+            std::fs::write(fixture.root.join("launch-count"), b"0").unwrap();
+            std::fs::write(&fixture.config.python, format!(
+                "#!/bin/sh\nread count < '{root}/launch-count'\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > '{root}/launch-count'\nexec /bin/sh '{root}/session-'\"$count\"\n",
+                root=fixture.root.display(),
+            )).unwrap();
+            fixture
+        }
+        fn saved_original(&self, replay_token: Option<&[u8]>) -> String {
+            let mut store =
+                ArtifactStore::open_matching(&self.config.output, &self.config.identity).unwrap();
+            store.record_original("test", &[4,2], &json!({"kind":"failure","fingerprint":"same","rendered":"original","replay_token":replay_token})).unwrap()
+        }
+        fn run(&self, mode: &str, report: &mut ExecutionReport) -> RunResult {
+            let mut store =
+                ArtifactStore::open_matching(&self.config.output, &self.config.identity).unwrap();
+            Executor::new(Arc::new(AtomicBool::new(false)))
+                .session(
+                    &self.config,
+                    &Invocation {
+                        test_id: "test".into(),
+                        raw_input: Some(vec![4, 2]),
+                    },
+                    mode,
+                    Some(&vec![9]),
+                    Instant::now(),
+                    &mut store,
+                    report,
+                    &mut None,
+                )
+                .unwrap()
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for SessionFixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case("run", vec![json!({"kind":"next","test_id":"other"})], "test ID mismatch")]
+    #[case("replay", vec![json!({"kind":"replay_case","test_id":"other"})], "replay test ID mismatch")]
+    #[case("run", vec![json!({"kind":"skipped","observation":{"nodeid":"other"}})], "skip correlation mismatch")]
+    #[case("run", vec![json!({"kind":"result"})], "result without active case")]
+    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":99,"observation":{"nodeid":"test"}})], "case ID mismatch")]
+    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":4}})], "malformed observation")]
+    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":"unknown"}})], "unknown observation")]
+    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"done"})], "done with an active case")]
+    #[case("run", vec![json!({"kind":"error","message":"injected failure"})], "injected failure")]
+    #[case("run", vec![json!({"kind":"error"})], "worker error")]
+    #[case("run", vec![json!({"kind":"unexpected"})], "unexpected control frame")]
+    fn invalid_worker_protocol_is_infrastructure(
+        #[case] mode: &str,
+        #[case] frames: Vec<Value>,
+        #[case] expected: &str,
+    ) {
+        let frames = [vec![json!({"kind":"ready","environment":{}})], frames].concat();
+        let fixture = SessionFixture::new(&frames);
+        let result = fixture.run(mode, &mut ExecutionReport::default());
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "infrastructure");
+        assert_eq!(observation.rendered.as_deref(), Some(expected));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn changed_worker_environment_is_infrastructure() {
+        let fixture = SessionFixture::new(&[json!({"kind":"ready","environment":{"python":2}})]);
+        let mut report = ExecutionReport {
+            environment: json!({"python":1}),
+            ..ExecutionReport::default()
+        };
+        let result = fixture.run("run", &mut report);
+        assert_eq!(
+            result.observation.unwrap().rendered.as_deref(),
+            Some("worker environment changed")
+        );
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case("run")]
+    #[case("replay")]
+    fn correlated_skip_finishes_orderly_session(#[case] mode: &str) {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"skipped","observation":{"nodeid":"test"}}),
+            json!({"kind":"done"}),
+        ]);
+        let result = fixture.run(mode, &mut ExecutionReport::default());
+        assert_eq!(result.observation.unwrap().kind, "skip");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn missing_interpreter_is_setup_infrastructure() {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.python = fixture.root.join("missing");
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "infrastructure");
+        assert!(
+            observation
+                .rendered
+                .unwrap()
+                .starts_with("worker/resource setup:")
+        );
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case(Limits {tree_memory_bytes:0, ..Limits::default()})]
+    #[case(Limits {case_ms:0, ..Limits::default()})]
+    #[case(Limits {slice_ms:0, ..Limits::default()})]
+    #[case(Limits {retained_output_bytes:16 * 1024 * 1024 + 1, ..Limits::default()})]
+    fn invalid_executor_settings_fail_before_launch(#[case] limits: Limits) {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits = limits;
+        let result =
+            Executor::new(Arc::new(AtomicBool::new(false))).explore("test", fixture.config.clone());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "configuration: invalid executor settings"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enqueue_after_command_channel_closes_records_error() {
+        let fixture = SessionFixture::new(&[]);
+        let mut worker = Worker::launch(&fixture.config).unwrap();
+        worker.input.take();
+        worker.enqueue(json!({"kind":"start"}));
+        assert_eq!(worker.send_error.as_deref(), Some("closed command channel"));
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case(false, Some(0), io::ErrorKind::TimedOut)]
+    #[case(true, None, io::ErrorKind::Interrupted)]
+    fn collection_expiry_reports_reason(
+        #[case] interrupted: bool,
+        #[case] campaign_ms: Option<u64>,
+        #[case] expected: io::ErrorKind,
+    ) {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits.campaign_ms = campaign_ms;
+        let result = collect(
+            &fixture.config.python,
+            &[],
+            &fixture.config.limits,
+            &AtomicBool::new(interrupted),
+        );
+        assert_eq!(result.unwrap_err().kind(), expected);
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case(b"not json".to_vec(), "expected ident")]
+    #[case(vec![b'x'; 8 * 1024 * 1024 + 1], "collection output exceeds limit")]
+    fn invalid_collection_output_preserves_stderr(#[case] bytes: Vec<u8>, #[case] expected: &str) {
+        let fixture = SessionFixture::new(&[]);
+        std::fs::write(fixture.root.join("frames"), bytes).unwrap();
+        std::fs::write(
+            &fixture.config.python,
+            format!(
+                "#!/bin/sh\ncat '{}'\nprintf 'collection diagnostic' >&2\n",
+                fixture.root.join("frames").display()
+            ),
+        )
+        .unwrap();
+        let error = collect(
+            &fixture.config.python,
+            &[],
+            &fixture.config.limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        let detail = error.to_string();
+        assert!(detail.contains(expected), "{detail}");
+        assert!(detail.contains("collection diagnostic"), "{detail}");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mandatory_hard_memory_unavailable_reports_infrastructure() {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits.allow_best_effort = false;
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap();
+        assert_eq!(
+            report.outcomes[0].verification,
+            "hard memory backend unavailable"
+        );
+        assert_eq!(report.outcomes[0].kind, "infrastructure");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_minimization_retains_active_candidate() {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"candidate","token":[1,2,3]}),
+            json!({"kind":"error","message":"candidate interrupted"}),
+        ]);
+        let result = fixture.run("minimize", &mut ExecutionReport::default());
+        assert_eq!(result.observation.unwrap().kind, "infrastructure");
+        assert_eq!(result.derived[0]["active_token"], json!([1, 2, 3]));
+        assert_eq!(
+            result.derived[0]["outcome"]["rendered"],
+            "candidate interrupted"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn replay_handshake_accepts_correlated_result() {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"replay_case","test_id":"test"}),
+            json!({"kind":"result","case_id":0,"observation":{"nodeid":"test","kind":"pass"}}),
+            json!({"kind":"done"}),
+        ]);
+        let result = fixture.run("replay", &mut ExecutionReport::default());
+        assert_eq!(result.observation.unwrap().kind, "pass");
+        assert!(result.retained_input.is_none());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unavailable_worker_resource_attachment_reports_setup_error() {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits.allow_best_effort = false;
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        assert!(
+            result
+                .observation
+                .unwrap()
+                .rendered
+                .unwrap()
+                .contains("no native hard memory backend")
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unavailable_collection_resource_attachment_fails_closed() {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits.allow_best_effort = false;
+        let error = collect(
+            &fixture.config.python,
+            &[],
+            &fixture.config.limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn incompatible_worker_payload_is_transport_infrastructure() {
+        let fixture = SessionFixture::new(&[]);
+        std::fs::write(fixture.root.join("frames"), [0, 0, 0, 2, b'[', b']']).unwrap();
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        assert_eq!(
+            result.observation.unwrap().rendered.as_deref(),
+            Some("incompatible frame")
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn worker_closing_command_input_reports_broken_pipe() {
+        let fixture = SessionFixture::new(&[json!({"kind":"ready","environment":{}})]);
+        std::fs::write(
+            &fixture.config.python,
+            format!(
+                "#!/bin/sh\nexec 0<&-\ncat '{}'\nsleep 60\n",
+                fixture.root.join("frames").display()
+            ),
+        )
+        .unwrap();
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        assert!(
+            result
+                .observation
+                .unwrap()
+                .rendered
+                .unwrap()
+                .to_lowercase()
+                .contains("broken pipe")
+        );
+    }
+    #[cfg(unix)]
+    fn replay_frames(kind: &str, fingerprint: &str) -> Vec<Value> {
+        let mut frames = vec![json!({"kind":"ready","environment":{}})];
+        match kind {
+            "none" => (),
+            "skip" => frames.push(json!({"kind":"skipped","observation":{"nodeid":"test"}})),
+            "infrastructure" => frames.push(json!({"kind":"error","message":"verification unavailable"})),
+            _ => frames.extend([
+                json!({"kind":"replay_case","test_id":"test"}),
+                json!({"kind":"result","case_id":0,"observation":{"nodeid":"test","kind":kind,"fingerprint":fingerprint}}),
+            ]),
+        }
+        frames.push(json!({"kind":"done"}));
+        frames
+    }
+    #[cfg(unix)]
+    fn shrink_frames(token: &Value) -> Vec<Value> {
+        vec![
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"candidate","token":[8]}),
+            json!({"kind":"shrunk","token":token,"complete":true}),
+            json!({"kind":"done"}),
+        ]
+    }
+    #[cfg(unix)]
+    fn initial_failure_frames() -> Vec<Value> {
+        vec![
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"next","test_id":"test"}),
+            json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":"failure","fingerprint":"same","rendered":"original","replay_token":[9]}}),
+            json!({"kind":"done"}),
+        ]
+    }
+    #[cfg(unix)]
+    fn persisted_evidence(path: &str) -> Value {
+        let value: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        value["evidence"].clone()
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::confirmed("failure", "same", "confirmed")]
+    #[case::different_assertion("failure", "different", "unstable")]
+    #[case::passing("pass", "same", "unstable")]
+    #[case::skipped("skip", "same", "unstable")]
+    #[case::infrastructure("infrastructure", "same", "pending")]
+    #[case::incomplete("none", "same", "pending")]
+    fn exploration_preserves_pending_and_checked_shrink_evidence(
+        #[case] kind: &str,
+        #[case] fingerprint: &str,
+        #[case] expected: &str,
+    ) {
+        let fixture = SessionFixture::sequenced(&[
+            initial_failure_frames(),
+            replay_frames("failure", "same"),
+            shrink_frames(&json!([8])),
+            replay_frames(kind, fingerprint),
+        ]);
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap();
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.verification, "confirmed");
+        assert_eq!(outcome.derived.len(), 3);
+        assert_eq!(
+            persisted_evidence(&outcome.derived[1])["verification"],
+            "pending"
+        );
+        assert_eq!(
+            persisted_evidence(&outcome.derived[2])["verification"],
+            expected
+        );
+        assert_eq!(persisted_evidence(&outcome.derived[2])["token"], json!([8]));
+        let original: Value =
+            serde_json::from_slice(&std::fs::read(outcome.original.as_ref().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(original["observation"]["rendered"], "original");
+        assert_eq!(original["observation"]["replay_token"], json!([9]));
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::matching("failure", "same", "confirmed")]
+    #[case::mismatched("failure", "different", "unstable")]
+    #[case::passing("pass", "same", "unstable")]
+    #[case::skipped("skip", "same", "unstable")]
+    #[case::infrastructure("infrastructure", "same", "pending")]
+    #[case::incomplete("none", "same", "pending")]
+    fn standalone_minimization_checks_candidate_in_fresh_session(
+        #[case] kind: &str,
+        #[case] fingerprint: &str,
+        #[case] expected: &str,
+    ) {
+        let fixture = SessionFixture::sequenced(&[
+            shrink_frames(&json!([8])),
+            replay_frames(kind, fingerprint),
+        ]);
+        let original = fixture.saved_original(Some(&[9]));
+        let before = std::fs::read(&original).unwrap();
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, Reproduction::Minimize)
+            .unwrap();
+        let outcome = report.outcomes.last().unwrap();
+        assert_eq!(
+            outcome.verification,
+            expected,
+            "{}",
+            serde_json::to_string(&report).unwrap()
+        );
+        assert_eq!(
+            outcome.derived.len(),
+            2,
+            "{}",
+            serde_json::to_string(&report).unwrap()
+        );
+        assert_eq!(
+            persisted_evidence(&outcome.derived[0])["verification"],
+            "pending"
+        );
+        assert_eq!(
+            persisted_evidence(&outcome.derived[1])["verification"],
+            expected
+        );
+        assert_eq!(std::fs::read(&original).unwrap(), before);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn tokenless_original_cannot_undergo_semantic_minimization() {
+        let fixture = SessionFixture::new(&[]);
+        let original = fixture.saved_original(None);
+        let before = std::fs::read(&original).unwrap();
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, Reproduction::Minimize)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("semantic minimization unavailable")
+        );
+        assert_eq!(std::fs::read(original).unwrap(), before);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn malformed_shrunk_token_cannot_authorize_fresh_replay() {
+        let fixture = SessionFixture::sequenced(&[shrink_frames(&json!("invalid"))]);
+        let original = fixture.saved_original(Some(&[9]));
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, Reproduction::Minimize)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn full_command_queue_records_backpressure_error() {
+        let fixture = SessionFixture::new(&[]);
+        let mut worker = Worker::launch(&fixture.config).unwrap();
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        sender.try_send(json!({"kind":"occupied"})).unwrap();
+        worker.input = Some(sender);
+        worker.enqueue(json!({"kind":"next"}));
+        assert!(worker.send_error.as_ref().unwrap().contains("full"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn disconnected_command_queue_records_writer_loss() {
+        let fixture = SessionFixture::new(&[]);
+        let mut worker = Worker::launch(&fixture.config).unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        worker.input = Some(sender);
+        worker.enqueue(json!({"kind":"next"}));
+        assert!(worker.send_error.as_ref().unwrap().contains("closed"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn poisoned_log_storage_returns_empty_tail() {
+        let fixture = SessionFixture::new(&[]);
+        let worker = Worker::launch(&fixture.config).unwrap();
+        let log = Arc::clone(&worker.log);
+        let panic = std::panic::catch_unwind(move || {
+            let _guard = log.lock().unwrap();
+            panic!("injected log owner panic");
+        });
+        assert!(panic.is_err());
+        assert_eq!(worker.take_log().observed, 0);
+    }
     proptest! {
         #[test]
         fn tail_preserves_exact_suffix(chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..256), 0..32), limit in 0usize..1024) {
-            let mut tail = LogTail::default();
-            let mut all: Vec<u8> = Vec::new();
-            for chunk in chunks { all.extend(&chunk); tail.append(&chunk, limit); }
+            let all: Vec<u8> = chunks.concat();
+            let tail = chunks.iter().fold(LogTail::default(), |mut tail, chunk| {
+                tail.append(chunk, limit);
+                tail
+            });
             let start = all.len().saturating_sub(limit);
             prop_assert_eq!(tail.tail.into_iter().collect::<Vec<_>>(), &all[start..]);
             prop_assert_eq!(tail.observed, all.len() as u64);
+            prop_assert_eq!(tail.truncated, all.len() > limit);
         }
     }
     proptest! {
         #[test]
         fn merged_tails_match_the_unbounded_reference(chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..256), 0..32), limit in 0usize..1024) {
-            let mut aggregate = LogTail::default();
-            let mut raw = Vec::new();
-            for chunk in chunks {
-                raw.extend_from_slice(&chunk);
+            let raw = chunks.concat();
+            let aggregate = chunks.iter().fold(LogTail::default(), |mut aggregate, chunk| {
                 let mut source = LogTail::default();
-                source.append(&chunk, limit);
+                source.append(chunk, limit);
                 aggregate.merge(&source, limit);
-            }
+                aggregate
+            });
             let start = raw.len().saturating_sub(limit);
             prop_assert_eq!(aggregate.tail.into_iter().collect::<Vec<_>>(), &raw[start..]);
             prop_assert_eq!(aggregate.observed, raw.len() as u64);
+            prop_assert_eq!(aggregate.truncated, raw.len() > limit);
         }
     }
     #[test]
-    fn merging_truncated_tails_counts_full_stream_and_saturates() {
+    fn merging_truncated_tails_counts_full_stream() {
         let mut left = LogTail::default();
         left.append(b"abcdef", 2);
         let mut right = LogTail::default();
@@ -1323,6 +1877,13 @@ mod tests {
         assert_eq!(left.tail.iter().copied().collect::<Vec<_>>(), b"ij");
         assert_eq!(left.observed, 10);
         assert!(left.truncated);
+    }
+    #[test]
+    fn merging_tails_saturates_observed_count() {
+        let mut left = LogTail::default();
+        left.append(b"abcdef", 2);
+        let mut right = LogTail::default();
+        right.append(b"ghij", 2);
         right.observed = u64::MAX;
         left.merge(&right, 0);
         assert_eq!(left.observed, u64::MAX);
@@ -1330,24 +1891,48 @@ mod tests {
         assert!(left.truncated);
     }
     #[test]
-    fn lean_generated_budget_correspondence() {
-        for line in include_str!("../formal/budget-cases.tsv").lines() {
-            let fields: Vec<_> = line.split('\t').collect();
-            let expected = expiry(
-                fields[0] == "true",
-                fields[1] == "true",
-                fields[2] == "true",
-            )
-            .unwrap_or("running");
-            assert_eq!(expected, fields[3]);
-        }
+    fn budget_correspondence_parameterization_covers_corpus() {
+        assert_eq!(
+            include_str!("../formal/budget-cases.tsv").lines().count(),
+            8
+        );
     }
-    #[test]
-    fn windows_abnormal_exit_table_is_candidate_evidence_only() {
-        assert!(windows_abnormal_exit(3));
-        assert!(windows_abnormal_exit(-1_073_741_819));
-        assert!(!windows_abnormal_exit(7));
-        assert!(!windows_abnormal_exit(0));
+    #[rstest::rstest]
+    fn lean_generated_budget_correspondence(#[values(0, 1, 2, 3, 4, 5, 6, 7)] row: usize) {
+        let line = include_str!("../formal/budget-cases.tsv")
+            .lines()
+            .nth(row)
+            .unwrap();
+        let fields: Vec<_> = line.split('\t').collect();
+        let actual = expiry(
+            fields[0] == "true",
+            fields[1] == "true",
+            fields[2] == "true",
+        )
+        .unwrap_or("running");
+        assert_eq!(actual, fields[3]);
+    }
+    #[rstest::rstest]
+    #[case(3, true)]
+    #[case(-1_073_741_819, true)]
+    #[case(7, false)]
+    #[case(0, false)]
+    fn windows_abnormal_exit_table_is_candidate_evidence_only(
+        #[case] code: i32,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(windows_abnormal_exit(code), expected);
+    }
+    #[cfg(unix)]
+    fn await_exit(child: &mut Child) -> std::process::ExitStatus {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = poll_exit(child).unwrap() {
+                return status;
+            }
+            assert!(start.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(1));
+        }
     }
     #[cfg(unix)]
     #[test]
@@ -1358,14 +1943,7 @@ mod tests {
             .process_group(0)
             .spawn()
             .unwrap();
-        let start = Instant::now();
-        let status = loop {
-            if let Some(status) = poll_exit(&mut child).unwrap() {
-                break status;
-            }
-            assert!(start.elapsed() < Duration::from_secs(2));
-            thread::sleep(Duration::from_millis(1));
-        };
+        let status = await_exit(&mut child);
         assert_eq!(status.code(), Some(7));
         let mut raw = 0;
         let pid = i32::try_from(child.id()).unwrap();
@@ -1377,11 +1955,15 @@ mod tests {
         );
     }
     #[test]
-    fn reserved_baseline_statistics_stays_null_and_reproduction_modes_are_closed() {
+    fn reserved_baseline_statistics_stays_null() {
         let report = serde_json::to_value(ExecutionReport::default()).unwrap();
         assert!(report["baseline_statistics"].is_null());
-        assert_eq!(Reproduction::Replay.wire_mode(), "replay");
-        assert_eq!(Reproduction::Minimize.wire_mode(), "minimize");
+    }
+    #[rstest::rstest]
+    #[case(Reproduction::Replay, "replay")]
+    #[case(Reproduction::Minimize, "minimize")]
+    fn reproduction_modes_are_closed(#[case] mode: Reproduction, #[case] expected: &str) {
+        assert_eq!(mode.wire_mode(), expected);
     }
 
     #[test]
@@ -1401,12 +1983,18 @@ mod tests {
             })
         );
         assert!(discovery.selection_complete());
+    }
+    #[test]
+    fn discovery_rejects_empty_selection() {
         let empty: Discovery = serde_json::from_value(json!({"nodeids": []})).unwrap();
         assert!(empty.selection_complete());
         assert_eq!(
             empty.admit().unwrap_err().to_string(),
             "selection contains no supported Hypothesis tests"
         );
+    }
+    #[test]
+    fn discovery_rejects_collection_failure() {
         let failed: Discovery =
             serde_json::from_value(json!({"nodeids": ["test"], "error": "collection failed"}))
                 .unwrap();
@@ -1416,10 +2004,73 @@ mod tests {
             "pytest collection failed; no targets executed: \"collection failed\""
         );
     }
+    #[rstest::rstest]
+    #[case(false, true, true, Some("campaign_cancelled"))]
+    #[case(true, true, true, Some("interrupted"))]
+    #[case(false, false, true, Some("case_timeout"))]
+    fn precedence(
+        #[case] interrupted: bool,
+        #[case] campaign: bool,
+        #[case] case: bool,
+        #[case] expected: Option<&str>,
+    ) {
+        assert_eq!(expiry(interrupted, campaign, case), expected);
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::normal(libc::CLD_EXITED, 7, 7 << 8)]
+    #[case::signal(libc::CLD_KILLED, libc::SIGTERM, libc::SIGTERM)]
+    #[case::core_dump(libc::CLD_DUMPED, libc::SIGABRT, libc::SIGABRT | 0x80)]
+    fn unix_notification_preserves_raw_status(
+        #[case] code: i32,
+        #[case] value: i32,
+        #[case] raw: i32,
+    ) {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(decode_unix_exit(code, value).unwrap().into_raw(), raw);
+    }
+    #[cfg(unix)]
     #[test]
-    fn precedence() {
-        assert_eq!(expiry(false, true, true), Some("campaign_cancelled"));
-        assert_eq!(expiry(true, true, true), Some("interrupted"));
-        assert_eq!(expiry(false, false, true), Some("case_timeout"));
+    fn unexpected_unix_notification_is_rejected() {
+        assert!(decode_unix_exit(libc::CLD_STOPPED, 0).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_exit_poll_remains_pending() {
+        assert!(
+            polling_error(io::Error::from(io::ErrorKind::Interrupted))
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn failed_exit_poll_preserves_os_error() {
+        assert_eq!(
+            polling_error(io::Error::from_raw_os_error(libc::ECHILD))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn polling_an_already_reaped_child_reports_error() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        child.wait().unwrap();
+        assert_eq!(
+            poll_exit(&mut child).unwrap_err().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+    #[cfg(unix)]
+    proptest! {
+        #[test]
+        fn unix_exit_status_keeps_the_low_byte(value in any::<i32>()) {
+            prop_assert_eq!(decode_unix_exit(libc::CLD_EXITED, value).unwrap().code(), Some(value & 0xff));
+        }
     }
 }

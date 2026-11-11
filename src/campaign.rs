@@ -199,13 +199,8 @@ pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result
 mod tests {
     use super::*;
     use crate::executor::{ExecutionReport, LogTail};
-    #[test]
-    fn progress_accumulates_typed_counters_and_preserves_last_slice_shape() {
+    fn progress_after_two_slices() -> TargetProgress {
         let mut progress = TargetProgress::new("test_x".into());
-        assert_eq!(
-            serde_json::to_value(&progress).unwrap(),
-            json!({"target":"test_x","status":"unexecuted","attempts":0,"report":null})
-        );
         let mut first = LogTail::default();
         first.append(b"abcdefgh", 3);
         progress.record(
@@ -232,6 +227,19 @@ mod tests {
             21,
             3,
         );
+        progress
+    }
+    #[test]
+    fn initial_progress_is_unexecuted() {
+        let progress = TargetProgress::new("test_x".into());
+        assert_eq!(
+            serde_json::to_value(&progress).unwrap(),
+            json!({"target":"test_x","status":"unexecuted","attempts":0,"report":null})
+        );
+    }
+    #[test]
+    fn progress_accumulates_typed_counters_and_preserves_last_slice_shape() {
+        let progress = progress_after_two_slices();
         let value = serde_json::to_value(&progress).unwrap();
         assert_eq!(value["attempts"], 7);
         assert_eq!(value["totals"]["useful"], 4);
@@ -240,6 +248,11 @@ mod tests {
         assert_eq!(value["charged_ms"], 21);
         assert_eq!(value["retained_output"]["tail"], json!(b"hxy"));
         assert_eq!(value["retained_output"]["observed"], 10);
+    }
+    #[test]
+    fn progress_error_preserves_accumulated_state() {
+        let mut progress = progress_after_two_slices();
+        let value = serde_json::to_value(&progress).unwrap();
         progress.record_error("disk full".into());
         let failed = serde_json::to_value(progress).unwrap();
         assert_eq!(failed["totals"], value["totals"]);
@@ -250,5 +263,15 @@ mod tests {
             failed["report"],
             json!({"outcomes":[{"kind":"infrastructure","detail":"disk full"}]})
         );
+    }
+    proptest::proptest! {
+        #[test]
+        fn accumulated_attempts_saturate_and_latest_charge_replaces_prior(first in proptest::prelude::any::<u64>(), second in proptest::prelude::any::<u64>(), first_charge in proptest::prelude::any::<u128>(), second_charge in proptest::prelude::any::<u128>()) {
+            let mut progress = TargetProgress::new("test_x".into());
+            progress.record(ExecutionReport { attempts: first, ..ExecutionReport::default() }, first_charge, 0);
+            progress.record(ExecutionReport { attempts: second, ..ExecutionReport::default() }, second_charge, 0);
+            proptest::prop_assert_eq!(progress.attempts, first.saturating_add(second));
+            proptest::prop_assert_eq!(progress.accumulated.as_ref().unwrap().charged_ms, second_charge);
+        }
     }
 }

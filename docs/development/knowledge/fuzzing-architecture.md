@@ -16,15 +16,15 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: 15999f9e1bf0b1e27d184d4e5018c684534f748e1436a1ead2129f67ea8025ca
+  sha256: 5b48ff3ab038b7de306ca4823d24c1cd205978c4ed94933e04148915519a1739
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: eb5e1dd0210ff439d71a21965cfbef307ea19d6cab609e002c7312d61506d0e4
+  sha256: 4851e3f0ab69745f6ae538151cb3ffb03820f8ab817861269a5faef903893c6c
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
-  sha256: 6c7e089cb13203ce8dd13483ad0f08f36352be5598cd0ed94b671f4e5beb0e0e
+  sha256: 6c363883dcb52ada43fb99e4917320d7f928f0bf9cbdaa70de5d12e0ce79ab03
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
   revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
@@ -35,11 +35,11 @@ sources:
 - id: product-command
   resource: ../../../src/command.rs
   working_tree: untracked
-  sha256: d924c98b9493480077306af0e0be7d727078e1161d1b39687ae2d3d63d35ac3e
+  sha256: b43053ff4a97886a1fb162201cf4b1820b8f57fb0eb260912b0c00769f8bd79f
 - id: product-verification
   resource: ../../../src/verification.rs
   working_tree: untracked
-  sha256: 3017dabc98e4638b098d65c179120c2b4e74e5d7ddc21daf1032dd9f335ef8e8
+  sha256: c2685c4be52e1a1f83bef580f573899a6d4e2738db987365d0f32d36908a8d18
 ---
 # Selected direction
 
@@ -233,3 +233,17 @@ kinds or saved-record matching rules change; do not reintroduce copies in caller
 [^product-verification][^product-executor]
 
 [^product-verification]: [Fresh reproduction policy](../../../src/verification.rs).
+
+# Test-driven boundary corrections
+
+Coverage work replaced command's independently optional replay context and mode
+with a private PreparedOperation, retaining the admitted context and writer lock
+as one state. ReplayContext retains its validated UTF-8 original representation
+so callers do not repeat an impossible encoding failure. JSON Value persistence
+uses infallible formatting after arbitrary serialization has already completed.
+Unix notification decoding and interrupted-poll policy are independently testable
+without reaping the cleanup anchor. These remove impossible states and expose
+real OS/transport errors to tests rather than excluding whole modules.
+The [test quality contract](test-quality.md) owns the new testing/measurement
+requirements; public CLI and version-1 artifacts remain unchanged.
+[^product-command][^product-store][^product-executor]

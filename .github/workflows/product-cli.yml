@@ -55,9 +55,19 @@ jobs:
         run: |
           uv run --project python --frozen --no-sync ruff check python
           uv run --project python --frozen --no-sync ruff format --check python
+          uv run --project python --frozen --no-sync ruff check --config python/pyproject.toml tools/run_coverage.py tools/report_coverage.py
+          uv run --project python --frozen --no-sync ruff format --config python/pyproject.toml --check tools/run_coverage.py tools/report_coverage.py
           uv run --project python --frozen --no-sync ty check --project python --python-version "$PYTHON_VERSION"
           mkdir -p product-evidence
           uv run --project python --frozen --no-sync pytest -c python/pyproject.toml python/tests -q --junitxml=product-evidence/python.xml
+      - name: Install fixed native coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Collect Rust and Python coverage including test implementations
+        run: |
+          product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          python tools/run_coverage.py --python "$product_python"
       - name: Run real best-effort CLI smoke campaign
         run: |
           product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
@@ -135,3 +145,19 @@ jobs:
             fuzz/artifacts/
           if-no-files-found: warn
           retention-days: 7
+
+  coverage:
+    name: Complete native coverage including tests
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: product-*-python-*
+          path: native-coverage
+      - name: Require exact coverage across native platforms
+        run: python tools/report_coverage.py native-coverage

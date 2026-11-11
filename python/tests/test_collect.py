@@ -6,11 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 COLLECT = Path(__file__).parents[1] / "kiryl_adapter" / "collect.py"
 
 
-def test_collect_sync_stateful_and_parameters(tmp_path: Path) -> None:
-    """Exclude unsupported functions and retain real parametrized node IDs."""
+@pytest.fixture
+def collection_project(tmp_path: Path) -> Path:
+    """Create synchronous, asynchronous, parameterized and stateful collection targets."""
     (tmp_path / "pytest.ini").write_text("[pytest]\n")
     (tmp_path / "test_targets.py").write_text("""
 import os
@@ -31,16 +34,28 @@ class Machine(RuleBasedStateMachine):
     def step(self): pass
 TestMachine = Machine.TestCase
 """)
+    return tmp_path
+
+
+def test_collect_sync_stateful_and_parameters(collection_project: Path) -> None:
+    """Exclude unsupported functions and retain real parametrized node IDs."""
+    tmp_path = collection_project
     result = subprocess.run(  # noqa: S603 -- owned interpreter and target
         [sys.executable, str(COLLECT), str(tmp_path)], capture_output=True, check=False
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
     assert len(data["nodeids"]) == 4  # noqa: PLR2004 -- property, two variants, state machine
-    assert any("TestMachine" in node for node in data["nodeids"])
-    assert all("async" not in node and "fixed" not in node for node in data["nodeids"])
+    assert "TestMachine" in "\n".join(data["nodeids"])
+    assert "async" not in "\n".join(data["nodeids"])
+    assert "fixed" not in "\n".join(data["nodeids"])
     assert data["environment"]["hypothesis"] == "6.170.13"
     assert b"target output" in result.stderr
+
+
+def test_collection_honors_pytest_selection(collection_project: Path) -> None:
+    """Selection limits discovery to the same supported property pytest selected."""
+    tmp_path = collection_project
     selected = subprocess.run(  # noqa: S603 -- owned interpreter and specimen
         [sys.executable, str(COLLECT), str(tmp_path), "-k", "property"],
         capture_output=True,
@@ -91,3 +106,35 @@ def test_unsupported_runtime_rejects_before_target_import(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert not marker.exists()
     assert "unsupported" in json.loads(result.stdout)["error"]
+
+
+def test_source_snapshot_without_root_is_empty() -> None:
+    """An unconfigured collection root cannot invent project identity."""
+    from collect import source_hashes  # noqa: PLC0415 -- product-only module
+
+    assert source_hashes(None) == {}
+
+
+@pytest.mark.parametrize("symlink_kind", ["file", "directory"])
+def test_source_snapshot_excludes_symlinks(tmp_path: Path, symlink_kind: str) -> None:
+    """Neither linked files nor linked directories belong to the source snapshot."""
+    from collect import source_hashes  # noqa: PLC0415 -- product-only module
+
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n")
+    targets = {"file": source, "directory": tmp_path}
+    (tmp_path / "linked.py").symlink_to(targets[symlink_kind])
+    assert set(source_hashes(tmp_path)) == {"app.py"}
+
+
+def test_collection_ignores_non_function_items(tmp_path: Path) -> None:
+    """A collected doctest is not a Hypothesis invocation."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "example.py").write_text('"""\n>>> 1 + 1\n2\n"""\n')
+    result = subprocess.run(  # noqa: S603 -- owned interpreter and doctest project
+        [sys.executable, str(COLLECT), str(tmp_path), "--doctest-modules"],
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["nodeids"] == []

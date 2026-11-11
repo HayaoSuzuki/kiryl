@@ -130,27 +130,134 @@ impl Search {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
-    fn novel_pass_uses_canonical_bytes_and_failure_keeps_original_bytes() {
+    fn initial_case_is_zero_seed() {
+        assert_eq!(Search::new(7).next_case(), vec![0; 512]);
+    }
+    #[rstest::rstest]
+    #[case("pass", vec![1, 2])]
+    #[case("failure", vec![9])]
+    fn novel_observation_selects_candidate_bytes(#[case] kind: &str, #[case] expected: Vec<u8>) {
         let mut search = Search::new(7);
-        assert_eq!(search.next_case(), vec![0; 512]);
-        let mut observation = Observation {
-            kind: "pass".into(),
+        let observation = Observation {
+            kind: kind.into(),
             canonical: Some(vec![1, 2]),
             features: vec!["branch-a".into()],
             ..Observation::default()
         };
         search.observe(&[9], &observation);
-        assert_eq!(search.corpus(), [vec![0; 512], vec![1, 2]]);
-        observation.kind = "failure".into();
-        observation.features = vec!["branch-b".into()];
-        search.observe(&[3, 4], &observation);
-        assert_eq!(search.corpus(), [vec![0; 512], vec![1, 2], vec![3, 4]]);
-        observation.kind = "reject".into();
-        observation.features = vec!["ignored".into()];
+        assert_eq!(search.corpus(), [vec![0; 512], expected]);
+        assert_eq!(search.feature_count(), 1);
+    }
+    #[test]
+    fn rejected_observation_does_not_change_corpus_or_features() {
+        let mut search = Search::new(7);
+        let observation = Observation {
+            kind: "reject".into(),
+            features: vec!["ignored".into()],
+            ..Observation::default()
+        };
         search.observe(&[5], &observation);
-        assert_eq!(search.feature_count(), 2);
-        assert_eq!(search.corpus_len(), 3);
+        assert_eq!(search.feature_count(), 0);
+        assert_eq!(search.corpus(), [vec![0; 512]]);
+    }
+    #[rstest::rstest]
+    #[case(vec![], vec![vec![0; 512]])]
+    #[case(vec![vec![1, 2]], vec![vec![1, 2]])]
+    fn restore_preserves_nonempty_corpus(
+        #[case] corpus: Vec<Vec<u8>>,
+        #[case] expected: Vec<Vec<u8>>,
+    ) {
+        let mut search = Search::new(0);
+        search.restore(corpus);
+        assert_eq!(search.corpus(), expected);
+        assert_eq!(search.corpus_len(), expected.len());
+    }
+    #[test]
+    fn insertion_mutation_at_input_limit_preserves_candidate() {
+        let mut search = Search::new(0);
+        search.restore(vec![vec![1; MAX_INPUT]]);
+        search.first = false;
+        assert_eq!(search.next_case(), vec![1; MAX_INPUT]);
+    }
+    #[rstest::rstest]
+    #[case(MAX_FEATURES, 0, "new".into())]
+    #[case(0, 0, "x".repeat(4097))]
+    #[case(0, 16 * 1024 * 1024, "new".into())]
+    fn exhausted_feature_budget_sets_limit_and_keeps_corpus(
+        #[case] count: usize,
+        #[case] bytes: usize,
+        #[case] feature: String,
+    ) {
+        let mut search = Search::new(0);
+        search.features = (0..count).map(|index| index.to_string()).collect();
+        search.feature_bytes = bytes;
+        let observation = Observation {
+            kind: "pass".into(),
+            features: vec![feature],
+            ..Observation::default()
+        };
+        search.observe(&[1], &observation);
+        assert!(search.feature_limit_reached);
+        assert_eq!(search.feature_count(), count);
+        assert_eq!(search.corpus(), [vec![0; 512]]);
+    }
+    #[test]
+    fn novel_feature_replaces_entry_when_corpus_is_full() {
+        let mut search = Search::new(0);
+        search.restore(vec![vec![0]; MAX_CORPUS]);
+        let observation = Observation {
+            kind: "failure".into(),
+            features: vec!["new".into()],
+            ..Observation::default()
+        };
+        search.observe(&[1], &observation);
+        assert_eq!(search.corpus_len(), MAX_CORPUS);
+        assert_eq!(
+            search
+                .corpus()
+                .iter()
+                .filter(|entry| entry.as_slice() == [1])
+                .count(),
+            1
+        );
+        assert_eq!(search.feature_count(), 1);
+    }
+    #[rstest::rstest]
+    fn novel_feature_without_admissible_candidate_preserves_corpus(
+        #[values(512, MAX_INPUT + 1)] length: usize,
+    ) {
+        let mut search = Search::new(0);
+        let observation = Observation {
+            kind: "pass".into(),
+            features: vec!["new".into()],
+            ..Observation::default()
+        };
+        search.observe(&vec![0; length], &observation);
+        assert_eq!(search.feature_count(), 1);
+        assert_eq!(search.corpus(), [vec![0; 512]]);
+    }
+    proptest! {
+        #[test]
+        fn observing_same_feature_twice_is_idempotent(input in proptest::collection::vec(any::<u8>(), 0..4097), feature in "[a-z]{1,32}") {
+            let mut search = Search::new(7);
+            let observation = Observation { kind: "pass".into(), features: vec![feature], ..Observation::default() };
+            search.observe(&input, &observation);
+            let corpus = search.corpus().to_vec();
+            search.observe(&input, &observation);
+            prop_assert_eq!(search.corpus(), corpus);
+            prop_assert_eq!(search.feature_count(), 1);
+        }
+        #[test]
+        fn mutation_stream_is_deterministic_and_bounded(seed in any::<u64>(), length in 0usize..128) {
+            let mut left = Search::new(seed);
+            let mut right = Search::new(seed);
+            let left_cases: Vec<_> = (0..length).map(|_| left.next_case()).collect();
+            let right_cases: Vec<_> = (0..length).map(|_| right.next_case()).collect();
+            prop_assert_eq!(&left_cases, &right_cases);
+            prop_assert!(left_cases.iter().all(|case| case.len() <= MAX_INPUT));
+        }
     }
 }

@@ -119,3 +119,32 @@ The product workflow separates the native matrix, Lean correspondence and finite
 scheduler fuzz campaign. See the [acceptance record](work/product-cli/acceptance-review.md)
 for local observations and unverified native hard-resource gates. Do not count
 best-effort execution as hard enforcement acceptance.
+
+## Independent cases and coverage
+
+Follow the [test quality contract](knowledge/test-quality.md). Enumerated inputs
+use rstest/pytest parameters; generated invariants use proptest/Hypothesis. One
+invocation exercises one case, with no conditional or loop control flow in its
+body. Keep infrastructure supervision in fixtures instead of grouping cases.
+
+Install the pinned coverage collector and LLVM tools, then collect one native cell:
+
+```sh
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --version 0.9.1 --locked
+python tools/run_coverage.py --python python/.venv/bin/python
+```
+
+On Windows select `python/.venv/Scripts/python.exe`. The collector reports local
+missing source; it does not claim other platforms were tested. It runs instrumented
+Rust tests and the same instrumented CLI through randomized Python acceptance.
+Default cargo-llvm-cov exclusions for tests are disabled. Input hashes detect
+uncommitted source changes during collection; reports retain revision and dirty
+state. Generated evidence lives under ignored `product-evidence/coverage/`.
+
+Product CI collects all six native OS/interpreter cells. Download their artifacts
+into one directory and run `python tools/report_coverage.py DIRECTORY`. This gate
+requires all cells, identical source/revision, complete source inventory, exact
+Rust line/function coverage and exact Python statement/branch coverage, including
+test implementations and coverage tooling. Missing native tests and zero-hit
+functions remain failures. No percentages are rounded up to meet the contract.

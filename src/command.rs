@@ -10,9 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
-fn invalid(message: &str) -> io::Error {
-    io::Error::other(message)
-}
 /// The user operation; reproduction requires a saved finding path.
 pub enum Operation {
     Run,
@@ -28,6 +25,15 @@ impl Operation {
         }
     }
 }
+// Pair reproduction kind with its admitted context so execution cannot lose
+// the writer lock or construct a reproduction without a finding.
+enum PreparedOperation {
+    Run,
+    Reproduce {
+        context: ReplayContext,
+        kind: Reproduction,
+    },
+}
 /// User choices independent of the adapter wire protocol and worker modes.
 pub struct Request {
     pub operation: Operation,
@@ -40,7 +46,7 @@ pub struct Request {
 /// A completed command retains its replay writer lock through report publication.
 pub struct CommandOutcome {
     report: Value,
-    _replay: Option<ReplayContext>,
+    _operation: PreparedOperation,
 }
 impl CommandOutcome {
     /// Publish the result before releasing any finding transaction lock.
@@ -70,13 +76,20 @@ pub fn execute(
         seed,
         store,
     } = request;
-    let replay = match &operation {
-        Operation::Run => None,
-        Operation::Replay(path) | Operation::Minimize(path) => Some(ReplayContext::open(path)?),
-    };
     let command = operation.name();
+    let operation = match operation {
+        Operation::Run => PreparedOperation::Run,
+        Operation::Replay(path) => PreparedOperation::Reproduce {
+            context: ReplayContext::open(&path)?,
+            kind: Reproduction::Replay,
+        },
+        Operation::Minimize(path) => PreparedOperation::Reproduce {
+            context: ReplayContext::open(&path)?,
+            kind: Reproduction::Minimize,
+        },
+    };
     if selection.is_empty()
-        && let Some(context) = &replay
+        && let PreparedOperation::Reproduce { context, .. } = &operation
     {
         selection = context.selection().to_vec();
     }
@@ -105,8 +118,8 @@ pub fn execute(
     let environment_identity = identity.clone();
     let remaining_execution_limits = serde_json::to_value(&limits)?;
     let replay_python = python.clone();
-    let mut report = if command == "run" {
-        campaign::run(
+    let mut report = match &operation {
+        PreparedOperation::Run => campaign::run(
             &CampaignConfig {
                 python,
                 pytest_args: selection,
@@ -117,34 +130,26 @@ pub fn execute(
                 seed,
             },
             &flag,
-        )?
-    } else {
-        let replay = replay
-            .as_ref()
-            .ok_or_else(|| invalid("missing replay context"))?;
-        replay.check_environment(&identity)?;
-        let config = ExecutionSettings {
-            python,
-            pytest_args: selection,
-            limits,
-            seed,
-            output: replay.directory().to_owned(),
-            identity: replay.store_identity().clone(),
-        };
-        serde_json::to_value(
-            Executor::new(flag).operation(
+        )?,
+        PreparedOperation::Reproduce {
+            context: replay,
+            kind,
+        } => {
+            replay.check_environment(&identity)?;
+            let config = ExecutionSettings {
+                python,
+                pytest_args: selection,
+                limits,
+                seed,
+                output: replay.directory().to_owned(),
+                identity: replay.store_identity().clone(),
+            };
+            serde_json::to_value(Executor::new(flag).operation(
                 &config,
-                replay
-                    .original()
-                    .to_str()
-                    .ok_or_else(|| invalid("non UTF-8 finding path"))?,
-                match operation {
-                    Operation::Replay(_) => Reproduction::Replay,
-                    Operation::Minimize(_) => Reproduction::Minimize,
-                    Operation::Run => unreachable!(),
-                },
-            )?,
-        )?
+                replay.original(),
+                *kind,
+            )?)?
+        }
     };
     let best_effort = requested_limits["allow_best_effort"]
         .as_bool()
@@ -163,6 +168,6 @@ pub fn execute(
     )?;
     Ok(CommandOutcome {
         report,
-        _replay: replay,
+        _operation: operation,
     })
 }

@@ -123,7 +123,7 @@ impl Verdict {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::Observation;
+    use proptest::prelude::*;
 
     fn observed(kind: &str, fingerprint: Option<&str>, rendered: Option<&str>) -> Observation {
         Observation {
@@ -134,159 +134,147 @@ mod tests {
         }
     }
 
-    #[test]
-    fn semantic_confirmation_requires_matching_failure_and_completed_check() {
+    #[rstest::rstest]
+    #[case::same_assertion("failure", Some("assertion-a"), Verdict::Confirmed)]
+    #[case::different_assertion("failure", Some("assertion-b"), Verdict::Unstable)]
+    #[case::passing("pass", Some("assertion-a"), Verdict::Unstable)]
+    #[case::skipped("skip", None, Verdict::Skipped)]
+    #[case::rejected("reject", None, Verdict::Rejected)]
+    #[case::cancelled("campaign_cancelled", None, Verdict::Pending)]
+    #[case::interrupted("interrupted", None, Verdict::Pending)]
+    #[case::infrastructure("infrastructure", None, Verdict::Pending)]
+    fn semantic_confirmation_requires_completed_matching_failure(
+        #[case] kind: &str,
+        #[case] fingerprint: Option<&str>,
+        #[case] expected: Verdict,
+    ) {
         let original = observed("failure", Some("assertion-a"), None);
-        let identity = FailureIdentity::observed(&original);
-        for (kind, fingerprint, expected) in [
-            ("failure", Some("assertion-a"), Verdict::Confirmed),
-            ("failure", Some("assertion-b"), Verdict::Unstable),
-            ("pass", Some("assertion-a"), Verdict::Unstable),
-            ("skip", None, Verdict::Skipped),
-            ("reject", None, Verdict::Rejected),
-            ("campaign_cancelled", None, Verdict::Pending),
-            ("interrupted", None, Verdict::Pending),
-            ("infrastructure", None, Verdict::Pending),
-        ] {
-            assert_eq!(
-                identity.check(Some(&observed(kind, fingerprint, None))),
-                expected
-            );
+        assert_eq!(
+            FailureIdentity::observed(&original).check(Some(&observed(kind, fingerprint, None))),
+            expected
+        );
+    }
+
+    #[test]
+    fn missing_check_is_pending() {
+        assert_eq!(
+            FailureIdentity::semantic(Some("assertion-a")).check(None),
+            Verdict::Pending
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::skipped(Verdict::Skipped, "skipped", "unstable")]
+    #[case::rejected(Verdict::Rejected, "rejected", "unstable")]
+    #[case::pending(Verdict::Pending, "pending", "pending")]
+    #[case::confirmed(Verdict::Confirmed, "confirmed", "confirmed")]
+    #[case::unstable(Verdict::Unstable, "unstable", "unstable")]
+    fn verdict_labels(#[case] verdict: Verdict, #[case] standalone: &str, #[case] candidate: &str) {
+        assert_eq!(verdict.status(), standalone);
+        assert_eq!(verdict.candidate_status(), candidate);
+    }
+
+    #[rstest::rstest]
+    #[case::same_native_detail(
+        "native_crash",
+        "exit-a",
+        "native_crash",
+        "exit-a",
+        Verdict::Confirmed
+    )]
+    #[case::different_native_detail(
+        "native_crash",
+        "exit-a",
+        "native_crash",
+        "exit-b",
+        Verdict::Unstable
+    )]
+    #[case::different_kind("native_crash", "exit-a", "case_timeout", "exit-a", Verdict::Unstable)]
+    #[case::assertion_is_not_native(
+        "native_crash",
+        "exit-a",
+        "failure",
+        "exit-a",
+        Verdict::Unstable
+    )]
+    #[case::timeout_ignores_detail(
+        "case_timeout",
+        "first",
+        "case_timeout",
+        "second",
+        Verdict::Confirmed
+    )]
+    fn observed_native_identity(
+        #[case] kind: &str,
+        #[case] detail: &str,
+        #[case] actual_kind: &str,
+        #[case] actual_detail: &str,
+        #[case] expected: Verdict,
+    ) {
+        let original = observed(kind, None, Some(detail));
+        assert_eq!(
+            FailureIdentity::observed(&original).check(Some(&observed(
+                actual_kind,
+                None,
+                Some(actual_detail)
+            ))),
+            expected
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::semantic_different_fingerprint("failure", Some("assertion-a"), Some(vec![1]), "first", ("failure", Some("assertion-b"), Some("first")), Verdict::Unstable)]
+    #[case::semantic_ignores_detail("failure", Some("assertion-a"), Some(vec![1]), "first", ("failure", Some("assertion-a"), Some("different")), Verdict::Confirmed)]
+    #[case::semantic_rejects_native("failure", Some("assertion-a"), Some(vec![1]), "first", ("native_crash", Some("assertion-a"), Some("first")), Verdict::Unstable)]
+    #[case::raw_semantic_alternative("native_crash", Some("recorded"), None, "exit-a", ("failure", Some("recorded"), None), Verdict::Confirmed)]
+    #[case::raw_different_fingerprint("native_crash", Some("recorded"), None, "exit-a", ("failure", Some("different"), None), Verdict::Unstable)]
+    #[case::raw_exact_detail("native_crash", Some("recorded"), None, "exit-a", ("native_crash", None, Some("exit-a")), Verdict::Confirmed)]
+    #[case::absent_fingerprints("native_crash", None, None, "exit-a", ("failure", None, None), Verdict::Confirmed)]
+    #[case::saved_timeout_detail_differs("case_timeout", None, None, "first", ("case_timeout", None, Some("second")), Verdict::Unstable)]
+    #[case::saved_timeout_detail_matches("case_timeout", None, None, "first", ("case_timeout", None, Some("first")), Verdict::Confirmed)]
+    #[case::saved_rejection("case_timeout", None, None, "first", ("reject", None, None), Verdict::Rejected)]
+    fn saved_identity_compatibility(
+        #[case] kind: &str,
+        #[case] fingerprint: Option<&str>,
+        #[case] replay_token: Option<Vec<u8>>,
+        #[case] detail: &str,
+        #[case] actual: (&str, Option<&str>, Option<&str>),
+        #[case] expected: Verdict,
+    ) {
+        let saved = crate::artifacts::FindingObservation {
+            kind: kind.into(),
+            fingerprint: fingerprint.map(str::to_owned),
+            replay_token,
+            rendered: Some(detail.into()),
+        };
+        assert_eq!(
+            FailureIdentity::saved(&saved).check(Some(&observed(actual.0, actual.1, actual.2))),
+            expected
+        );
+    }
+
+    #[test]
+    fn observed_absent_fingerprints_match() {
+        let original = observed("failure", None, None);
+        assert_eq!(
+            FailureIdentity::observed(&original).check(Some(&original)),
+            Verdict::Confirmed
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn semantic_confirmation_ignores_rendered_values(fingerprint in prop::option::of(".{0,80}"), first in prop::option::of(".{0,80}"), second in prop::option::of(".{0,80}")) {
+            let original = observed("failure", fingerprint.as_deref(), first.as_deref());
+            let actual = observed("failure", fingerprint.as_deref(), second.as_deref());
+            prop_assert_eq!(FailureIdentity::observed(&original).check(Some(&actual)), Verdict::Confirmed);
         }
-        assert_eq!(identity.check(None), Verdict::Pending);
-        assert_eq!(Verdict::Skipped.candidate_status(), "unstable");
-        assert_eq!(Verdict::Rejected.candidate_status(), "unstable");
-        assert_eq!(Verdict::Skipped.status(), "skipped");
-    }
-
-    #[test]
-    fn native_identity_distinguishes_exit_detail_but_automatic_timeout_does_not() {
-        let crash = observed("native_crash", None, Some("exit-a"));
-        assert_eq!(
-            FailureIdentity::observed(&crash).check(Some(&crash)),
-            Verdict::Confirmed
-        );
-        assert_eq!(
-            FailureIdentity::observed(&crash).check(Some(&observed(
-                "native_crash",
-                None,
-                Some("exit-b")
-            ))),
-            Verdict::Unstable
-        );
-        assert_eq!(
-            FailureIdentity::observed(&crash).check(Some(&observed(
-                "case_timeout",
-                None,
-                Some("exit-a")
-            ))),
-            Verdict::Unstable
-        );
-        let timeout = observed("case_timeout", None, Some("first"));
-        assert_eq!(
-            FailureIdentity::observed(&timeout).check(Some(&observed(
-                "case_timeout",
-                None,
-                Some("second")
-            ))),
-            Verdict::Confirmed
-        );
-    }
-
-    #[test]
-    fn saved_semantic_identity_does_not_accept_matching_native_details() {
-        let saved = crate::artifacts::FindingObservation {
-            kind: "failure".into(),
-            fingerprint: Some("assertion-a".into()),
-            replay_token: Some(vec![1]),
-            rendered: Some("first".into()),
-        };
-        let identity = FailureIdentity::saved(&saved);
-        assert_eq!(
-            identity.check(Some(&observed(
-                "failure",
-                Some("assertion-b"),
-                Some("first")
-            ))),
-            Verdict::Unstable
-        );
-        assert_eq!(
-            identity.check(Some(&observed(
-                "failure",
-                Some("assertion-a"),
-                Some("different")
-            ))),
-            Verdict::Confirmed
-        );
-        assert_eq!(
-            identity.check(Some(&observed(
-                "native_crash",
-                Some("assertion-a"),
-                Some("first")
-            ))),
-            Verdict::Unstable
-        );
-    }
-
-    #[test]
-    fn saved_raw_compatibility_retains_semantic_alternative() {
-        let saved = crate::artifacts::FindingObservation {
-            kind: "native_crash".into(),
-            fingerprint: Some("recorded".into()),
-            replay_token: None,
-            rendered: Some("exit-a".into()),
-        };
-        let identity = FailureIdentity::saved(&saved);
-        assert_eq!(
-            identity.check(Some(&observed("failure", Some("recorded"), None))),
-            Verdict::Confirmed
-        );
-        assert_eq!(
-            identity.check(Some(&observed("failure", Some("different"), None))),
-            Verdict::Unstable
-        );
-        assert_eq!(
-            identity.check(Some(&observed("native_crash", None, Some("exit-a")))),
-            Verdict::Confirmed
-        );
-        let without_fingerprint = crate::artifacts::FindingObservation {
-            fingerprint: None,
-            ..saved
-        };
-        assert_eq!(
-            FailureIdentity::saved(&without_fingerprint)
-                .check(Some(&observed("failure", None, None))),
-            Verdict::Confirmed
-        );
-    }
-
-    #[test]
-    fn saved_raw_identity_preserves_detail_and_standalone_labels() {
-        let original = crate::artifacts::FindingObservation {
-            kind: "case_timeout".into(),
-            fingerprint: None,
-            replay_token: None,
-            rendered: Some("first".into()),
-        };
-        let identity = FailureIdentity::saved(&original);
-        assert_eq!(
-            identity.check(Some(&observed("case_timeout", None, Some("second")))),
-            Verdict::Unstable
-        );
-        assert_eq!(
-            identity.check(Some(&observed("case_timeout", None, Some("first")))),
-            Verdict::Confirmed
-        );
-        assert_eq!(
-            identity
-                .check(Some(&observed("reject", None, None)))
-                .status(),
-            "rejected"
-        );
-        let semantic = observed("failure", None, None);
-        assert_eq!(
-            FailureIdentity::observed(&semantic).check(Some(&semantic)),
-            Verdict::Confirmed
-        );
+        #[test]
+        fn distinct_native_exit_details_cannot_confirm(detail in ".{0,80}", suffix in ".{1,40}") {
+            let changed = format!("{detail}{suffix}");
+            let original = observed("native_crash", None, Some(&detail));
+            let actual = observed("native_crash", None, Some(&changed));
+            prop_assert_eq!(FailureIdentity::observed(&original).check(Some(&actual)), Verdict::Unstable);
+        }
     }
 }

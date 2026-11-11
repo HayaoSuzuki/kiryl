@@ -47,7 +47,7 @@ def test_rejects_malformed_concepts(tmp_path: Path, content: str) -> None:
     (root / "rule.md").write_text(content)
     errors = check_repository(tmp_path)
     assert errors
-    assert any("rule.md" in error for error in errors)
+    assert "rule.md" in "\n".join(errors)
 
 
 @pytest.mark.parametrize("name", ["nested/index.md", "log.md"])
@@ -56,19 +56,19 @@ def test_reserved_files_cannot_hide_concepts(tmp_path: Path, name: str) -> None:
     page = root / name
     page.parent.mkdir(exist_ok=True)
     page.write_text("---\ntype: Decision\n---\n# Reserved\n")
-    assert any(name in error for error in validate_okf(root))
+    assert name in "\n".join(validate_okf(root))
 
 
 def test_requires_explicit_bundle_version(tmp_path: Path) -> None:
     root = bundle(tmp_path)
     (root / "index.md").write_text("# Knowledge\n[Rule](rule.md)\n")
-    assert any("index.md" in error for error in validate_okf(root))
+    assert "index.md" in "\n".join(validate_okf(root))
 
 
 def test_missing_entry_point_fails_with_a_diagnostic(tmp_path: Path) -> None:
     root = bundle(tmp_path)
     (root / "index.md").unlink()
-    assert any("index.md" in error for error in check_repository(tmp_path))
+    assert "index.md" in "\n".join(check_repository(tmp_path))
 
 
 def test_missing_source_and_orphan_are_reported(tmp_path: Path) -> None:
@@ -76,8 +76,8 @@ def test_missing_source_and_orphan_are_reported(tmp_path: Path) -> None:
     (root.parent / "evidence.md").unlink()
     (root / "orphan.md").write_text((root / "rule.md").read_text())
     errors = check_repository(tmp_path)
-    assert any("evidence.md" in error for error in errors)
-    assert any("orphan.md" in error for error in errors)
+    assert "evidence.md" in "\n".join(errors)
+    assert "orphan.md" in "\n".join(errors)
 
 
 def test_checks_user_docs_and_agent_entry_links(tmp_path: Path) -> None:
@@ -87,8 +87,8 @@ def test_checks_user_docs_and_agent_entry_links(tmp_path: Path) -> None:
     (user / "index.md").write_text("[Quick start](absent.md)\n")
     (tmp_path / "AGENTS.md").write_text("[Rules](missing-rules.md)\n")
     errors = check_repository(tmp_path)
-    assert any("absent.md" in error for error in errors)
-    assert any("missing-rules.md" in error for error in errors)
+    assert "absent.md" in "\n".join(errors)
+    assert "missing-rules.md" in "\n".join(errors)
 
 
 def test_ignores_external_urls_and_links_in_examples(tmp_path: Path) -> None:
@@ -104,7 +104,7 @@ def test_source_ids_require_matching_citations(tmp_path: Path) -> None:
     root = bundle(tmp_path)
     page = root / "rule.md"
     page.write_text(page.read_text().replace("id: evidence", "id: uncited"))
-    assert any("uncited" in error for error in validate_okf(root))
+    assert "uncited" in "\n".join(validate_okf(root))
 
 
 def test_duplicate_source_ids_fail(tmp_path: Path) -> None:
@@ -117,7 +117,7 @@ def test_duplicate_source_ids_fail(tmp_path: Path) -> None:
             "    resource: ../evidence.md\n---",
         )
     )
-    assert any("duplicate" in error for error in validate_okf(root))
+    assert "duplicate" in "\n".join(validate_okf(root))
 
 
 def test_definition_alone_does_not_attribute_a_claim(tmp_path: Path) -> None:
@@ -126,7 +126,7 @@ def test_definition_alone_does_not_attribute_a_claim(tmp_path: Path) -> None:
     page.write_text(
         page.read_text().replace("Read the evidence.[^evidence]", "No attribution.")
     )
-    assert any("evidence" in error for error in validate_okf(root))
+    assert "evidence" in "\n".join(validate_okf(root))
 
 
 @pytest.mark.parametrize(
@@ -149,4 +149,4 @@ def test_malformed_sources_produce_diagnostics(
             "sources:\n  - id: evidence\n    resource: ../evidence.md", replacement
         )
     )
-    assert any("rule.md" in error for error in check_repository(tmp_path))
+    assert "rule.md" in "\n".join(check_repository(tmp_path))

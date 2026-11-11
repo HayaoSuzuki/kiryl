@@ -1,21 +1,32 @@
 # Copyright (c) 2026 kiryl contributors
 """Native product CLI acceptance; build with cargo build before running."""
 
+import ctypes
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
 from contextlib import suppress
+from operator import itemgetter
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-BINARY = (
-    Path(__file__).parents[2]
-    / "target"
-    / "debug"
-    / ("kiryl.exe" if sys.platform == "win32" else "kiryl")
+BINARY = Path(
+    os.environ.get(
+        "KIRYL_BINARY",
+        str(
+            Path(__file__).parents[2]
+            / "target"
+            / "debug"
+            / ("kiryl.exe" if sys.platform == "win32" else "kiryl")
+        ),
+    )
 )
+
 pytestmark = pytest.mark.skipif(not BINARY.exists(), reason="cargo build required")
 
 
@@ -57,6 +68,79 @@ def run(root: Path, name: str = "report", *extra: str) -> tuple[int, dict[str, A
     return result.returncode, json.loads((root / f"{name}.json").read_text())
 
 
+def read_record(path: Path) -> dict[str, Any]:
+    """Read one immutable finding record from the store."""
+    return json.loads(path.read_bytes())
+
+
+def wait_for_marker(marker: Path, process: subprocess.Popen[bytes], timeout: float) -> None:
+    """Wait for worker readiness with a bounded polling deadline."""
+    deadline = time.monotonic() + timeout
+    while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+
+def stop_process(process: subprocess.Popen[bytes] | None) -> None:
+    """Reap a test process even when its scenario raises before signaling it."""
+    if process is not None and process.poll() is None:
+        process.kill()
+        process.communicate(timeout=10)
+
+
+def wait_for_linux_child(child_pid: int) -> Path:
+    """Allow process-group cleanup to become observable before inspecting status."""
+    deadline = time.monotonic() + 2
+    status = Path(f"/proc/{child_pid}/status")
+    while status.exists() and "State:\tZ" not in status.read_text() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return status
+
+
+def kill_pid_file(pid_file: Path, sig: int) -> None:
+    """Clean a leftover child without treating an already reaped PID as an error."""
+    if pid_file.exists():
+        with suppress(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), sig)
+
+
+def assert_windows_child_exited(kernel: ctypes.CDLL, handle: int | None) -> None:
+    """Interpret both valid exited handles and already reaped Windows PIDs."""
+    assert sys.platform == "win32"
+
+    if bool(handle):
+        code = ctypes.c_uint32()
+        assert kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+        assert code.value != 259  # noqa: PLR2004 -- STILL_ACTIVE
+    else:
+        assert ctypes.get_last_error() in (87, 1168)
+
+
+def close_windows_child(kernel: ctypes.CDLL, handle: int | None, pid_file: Path) -> None:
+    """Release native handles and clean a child after a failed assertion."""
+    if bool(handle):
+        kernel.CloseHandle(handle)
+    if pid_file.exists():
+        try:
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+        except OSError as error:
+            if getattr(error, "winerror", None) not in (87, 1168):
+                raise
+
+
+def allocate_console(kernel: ctypes.CDLL, *, allocated: bool) -> None:
+    """Acquire a console only when the Windows runner does not already own one."""
+    assert sys.platform == "win32"
+
+    if allocated and not kernel.AllocConsole():
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def free_console(kernel: ctypes.CDLL, *, allocated: bool) -> None:
+    """Release only the console allocated by this test."""
+    if allocated:
+        kernel.FreeConsole()
+
+
 def test_passing_run_restarts_persistent_corpus(tmp_path: Path) -> None:
     """Finite successful searches remain successful when resumed from their store."""
     project(
@@ -73,8 +157,9 @@ def test_passing_run_restarts_persistent_corpus(tmp_path: Path) -> None:
     assert code in (0, 1)
 
 
-def test_failure_original_replay_minimize_and_mismatch(tmp_path: Path) -> None:
-    """Fresh verification and minimization preserve immutable original bytes."""
+@pytest.fixture
+def failing_original(tmp_path: Path) -> tuple[Path, bytes]:
+    """Persist one always-failing property and its immutable original candidate."""
     project(
         tmp_path,
         "from hypothesis import given, strategies as st\n"
@@ -84,10 +169,25 @@ def test_failure_original_replay_minimize_and_mismatch(tmp_path: Path) -> None:
     assert code == 1
     original = next((tmp_path / "store").rglob("finding-*.bin"))
     before = original.read_bytes()
-    for command in ("replay", "minimize"):
-        result = invoke(tmp_path, command, str(original), "--best-effort", "--duration", "2")
-        assert result.returncode == 1, result.stderr
-        assert original.read_bytes() == before
+    return original, before
+
+
+@pytest.mark.parametrize("command", ["replay", "minimize"])
+def test_failure_replay_and_minimize_preserve_original(
+    tmp_path: Path, failing_original: tuple[Path, bytes], command: str
+) -> None:
+    """Fresh verification and minimization preserve immutable original bytes."""
+    original, before = failing_original
+    result = invoke(tmp_path, command, str(original), "--best-effort", "--duration", "2")
+    assert result.returncode == 1, result.stderr
+    assert original.read_bytes() == before
+
+
+def test_replay_rejects_changed_source(
+    tmp_path: Path, failing_original: tuple[Path, bytes]
+) -> None:
+    """Source identity drift rejects replay without changing the saved original."""
+    original, before = failing_original
     source = tmp_path / "test_target.py"
     source.write_text(source.read_text() + "\n# changed source\n")
     result = invoke(tmp_path, "replay", str(original), "--best-effort", "--duration", "2")
@@ -119,11 +219,11 @@ TestSelectedMachine = Machine.TestCase
     )
     code, report = run(tmp_path, "selected", "-k", "selected and not excluded")
     assert code in (0, 1)
-    targets = [entry["target"] for entry in report["targets"]]
+    targets = list(map(itemgetter("target"), report["targets"]))
     assert len(targets) == 3  # noqa: PLR2004 -- two variants and state machine
-    assert any("[a]" in target for target in targets)
-    assert any("[b]" in target for target in targets)
-    assert any("TestSelectedMachine" in target for target in targets)
+    assert "[a]" in "\n".join(targets)
+    assert "[b]" in "\n".join(targets)
+    assert "TestSelectedMachine" in "\n".join(targets)
 
 
 def test_case_timeout_preserves_active_input(tmp_path: Path) -> None:
@@ -148,13 +248,13 @@ def test_case_timeout_preserves_active_input(tmp_path: Path) -> None:
         str(tmp_path / "timeout.json"),
     )
     assert result.returncode == 1, result.stderr
-    records = [
-        json.loads(path.read_bytes()) for path in (tmp_path / "store").rglob("finding-*.bin")
-    ]
+    records = list(map(read_record, (tmp_path / "store").rglob("finding-*.bin")))
     assert records
-    assert all(record["test_id"] == "test_target.py::test_hang" for record in records)
-    assert all(isinstance(record["input"], list) for record in records)
-    timed_out = [record for record in records if record["observation"]["kind"] == "case_timeout"]
+    assert set(map(itemgetter("test_id"), records)) == {"test_target.py::test_hang"}
+    assert set(map(type, map(itemgetter("input"), records))) == {list}
+    timed_out = list(
+        filter(lambda record: record["observation"]["kind"] == "case_timeout", records)
+    )
     assert timed_out
     assert timed_out[0]["input"] == [0] * 512
 
@@ -167,6 +267,7 @@ def test_short_budget_keeps_unexecuted_target_visible(tmp_path: Path) -> None:
         "@given(st.integers())\ndef test_first(n):\n    time.sleep(10)\n"
         "@given(st.integers())\ndef test_later(n):\n    pass\n",
     )
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = --randomly-dont-reorganize\n")
     result = invoke(
         tmp_path,
         "run",
@@ -181,7 +282,7 @@ def test_short_budget_keeps_unexecuted_target_visible(tmp_path: Path) -> None:
     )
     assert result.returncode in (0, 1), result.stderr
     report = json.loads((tmp_path / "short.json").read_text())
-    later = next(entry for entry in report["targets"] if entry["target"].endswith("test_later"))
+    later = next(filter(lambda entry: entry["target"].endswith("test_later"), report["targets"]))
     assert later["attempts"] == 0
 
 
@@ -216,7 +317,7 @@ def test_output(n):
     code, report = run(tmp_path, "output", "--output-bytes", "1024")
     assert code in (0, 1)
     logs = report["targets"][0]["report"]["logs"]
-    assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004 -- configured limit
+    assert sum(map(len, map(itemgetter("tail"), logs))) <= 1024  # noqa: PLR2004 -- configured limit
     retained = report["targets"][0]["retained_output"]
     assert len(retained["tail"]) <= 1024  # noqa: PLR2004 -- campaign retention bound
     assert retained["observed"] > 1024  # noqa: PLR2004 -- configured limit
@@ -234,9 +335,10 @@ def test_native_crash_original_and_fresh_raw_replay(tmp_path: Path) -> None:
     code, report = run(tmp_path, "crash")
     assert code == 1
     crash = next(
-        item
-        for item in report["targets"][0]["report"]["outcomes"]
-        if item["kind"] == "native_crash"
+        filter(
+            lambda item: item["kind"] == "native_crash",
+            report["targets"][0]["report"]["outcomes"],
+        )
     )
     original = Path(crash["original"])
     before = original.read_bytes()
@@ -262,9 +364,6 @@ def test_native_crash_original_and_fresh_raw_replay(tmp_path: Path) -> None:
 )
 def test_untimed_campaign_interrupt_persists_report(tmp_path: Path) -> None:
     """SIGINT ends an untimed campaign with exit 130 and an interrupted report."""
-    import signal  # noqa: PLC0415 -- POSIX subprocess test
-    import time  # noqa: PLC0415
-
     marker = tmp_path / "started.txt"
     project(
         tmp_path,
@@ -290,17 +389,13 @@ def test_untimed_campaign_interrupt_persists_report(tmp_path: Path) -> None:
         stderr=subprocess.PIPE,
     )
     try:
-        deadline = time.monotonic() + 10
-        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.02)
+        wait_for_marker(marker, process, 10)
         assert marker.exists(), process.poll()
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 130, (stdout, stderr)  # noqa: PLR2004 -- public exit
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.communicate(timeout=10)
+        stop_process(process)
     assert json.loads((tmp_path / "interrupt.json").read_text())["interrupted"] is True
 
 
@@ -329,7 +424,7 @@ def test_handle(n):
     code, report = run(tmp_path, "handles", "--output-bytes", "1024")
     assert code in (0, 1)
     logs = report["targets"][0]["report"]["logs"]
-    assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004
+    assert sum(map(len, map(itemgetter("tail"), logs))) <= 1024  # noqa: PLR2004
     retained = report["targets"][0]["retained_output"]
     assert len(retained["tail"]) <= 1024  # noqa: PLR2004 -- campaign retention bound
     assert retained["observed"] > 1024  # noqa: PLR2004 -- configured limit
@@ -339,12 +434,7 @@ def test_handle(n):
 @pytest.mark.skipif(sys.platform != "linux", reason="native Linux process-tree cleanup")
 def test_timeout_cleans_worker_descendant_tree(tmp_path: Path) -> None:
     """A worker timeout cannot leave its descendant running outside its lifetime."""
-    import os  # noqa: PLC0415 -- native process inspection
-    import signal  # noqa: PLC0415
-    import time  # noqa: PLC0415
-
-    if sys.platform != "linux":
-        pytest.skip("Linux native process status")
+    assert sys.platform == "linux"
     pid_file = tmp_path / "child.txt"
     project(
         tmp_path,
@@ -374,27 +464,17 @@ def test_timeout_cleans_worker_descendant_tree(tmp_path: Path) -> None:
         child_pid = int(pid_file.read_text())
         # Ordinary process-group cleanup is observable even when the backend
         # conservatively disclaims hard cleanup of detached descendants.
-        deadline = time.monotonic() + 2
-        status = Path(f"/proc/{child_pid}/status")
-        while (
-            status.exists()
-            and "State:\tZ" not in status.read_text()
-            and time.monotonic() < deadline
-        ):
-            time.sleep(0.02)
+        status = wait_for_linux_child(child_pid)
         assert not status.exists() or "State:\tZ" in status.read_text()
     finally:
-        if pid_file.exists():
-            with suppress(ProcessLookupError):
-                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+        kill_pid_file(pid_file, signal.SIGKILL)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows Job Object descendant cleanup")
 def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
     """Terminating a worker job also terminates the Python child it created."""
+    assert sys.platform == "win32"
     import ctypes  # noqa: PLC0415 -- native Windows process status
-    import os  # noqa: PLC0415
-    import signal  # noqa: PLC0415
 
     pid_file = tmp_path / "child.txt"
     project(
@@ -406,8 +486,6 @@ def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
         f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
         "    time.sleep(60)\n",
     )
-    if sys.platform != "win32":
-        pytest.skip("Windows native process status")
     handle = None
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
@@ -434,22 +512,9 @@ def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
         report = json.loads((tmp_path / "job.json").read_text())
         assert report["targets"][0]["report"]["capabilities"]["tree_cleanup"] is True
         handle = kernel.OpenProcess(0x1000, 0, child_pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if handle:
-            code = ctypes.c_uint32()
-            assert kernel.GetExitCodeProcess(handle, ctypes.byref(code))
-            assert code.value != 259  # noqa: PLR2004 -- STILL_ACTIVE
-        else:
-            assert ctypes.get_last_error() in (87, 1168)  # absent PID, not permission denial
+        assert_windows_child_exited(kernel, handle)
     finally:
-        if handle:
-            kernel.CloseHandle(handle)
-        if pid_file.exists():
-            try:
-                os.kill(int(pid_file.read_text()), signal.SIGTERM)
-            except OSError as error:
-                # A successfully terminated job may already have reaped its PID.
-                if error.winerror not in (87, 1168):
-                    raise
+        close_windows_child(kernel, handle, pid_file)
 
 
 def test_fixture_setup_error_retains_diagnostic_detail(tmp_path: Path) -> None:
@@ -482,9 +547,9 @@ def test_setup(broken, n):
     assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
     report = json.loads((tmp_path / "setup.json").read_text())
     outcomes = report["targets"][0]["report"]["outcomes"]
-    infrastructure = [item for item in outcomes if item["kind"] == "infrastructure"]
+    infrastructure = list(filter(lambda item: item["kind"] == "infrastructure", outcomes))
     assert infrastructure
-    assert any("setup sentinel diagnostic" in item["detail"] for item in infrastructure)
+    assert "setup sentinel diagnostic" in "\n".join(map(itemgetter("detail"), infrastructure))
 
 
 def test_collection_error_replaces_stale_success_report(tmp_path: Path) -> None:
@@ -546,19 +611,15 @@ def test_store_lock_failure_remains_visible_in_target_report(tmp_path: Path) -> 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows console control event")
 def test_windows_untimed_console_break_persists_report(tmp_path: Path) -> None:
     """A real console CTRL_BREAK_EVENT interrupts the product process group."""
+    assert sys.platform == "win32"
     import ctypes  # noqa: PLC0415 -- native Windows console ownership
-    import signal  # noqa: PLC0415
-    import time  # noqa: PLC0415
 
-    if sys.platform != "win32":
-        pytest.skip("Windows console control event")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.GetConsoleCP.restype = ctypes.c_uint32
     kernel.AllocConsole.restype = ctypes.c_int
     kernel.FreeConsole.restype = ctypes.c_int
     allocated = kernel.GetConsoleCP() == 0
-    if allocated and not kernel.AllocConsole():
-        raise ctypes.WinError(ctypes.get_last_error())
+    allocate_console(kernel, allocated=allocated)
     marker = tmp_path / "started.txt"
     project(
         tmp_path,
@@ -586,9 +647,7 @@ def test_windows_untimed_console_break_persists_report(tmp_path: Path) -> None:
             stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        deadline = time.monotonic() + 15
-        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.02)
+        wait_for_marker(marker, process, 15)
         assert marker.exists(), process.poll()
         process.send_signal(signal.CTRL_BREAK_EVENT)
         stdout, stderr = process.communicate(timeout=15)
@@ -596,8 +655,5 @@ def test_windows_untimed_console_break_persists_report(tmp_path: Path) -> None:
         report = json.loads((tmp_path / "interrupt.json").read_text())
         assert report["interrupted"] is True
     finally:
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.communicate(timeout=10)
-        if allocated:
-            kernel.FreeConsole()
+        stop_process(process)
+        free_console(kernel, allocated=allocated)

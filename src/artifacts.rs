@@ -168,9 +168,12 @@ impl ArtifactStore {
             .file_name()
             .ok_or_else(|| io::Error::other("missing finding filename"))?
             .to_string_lossy();
-        let bytes = serde_json::to_vec(
-            &serde_json::json!({"version":1,"original":name,"test_id":test_id,"evidence":evidence}),
-        )?;
+        // JSON Value formatting is infallible; all arbitrary serialization has
+        // already completed before this persistence boundary.
+        let bytes =
+            serde_json::json!({"version":1,"original":name,"test_id":test_id,"evidence":evidence})
+                .to_string()
+                .into_bytes();
         if bytes.len() > 1024 * 1024 {
             return Err(io::Error::other("derived evidence exceeds limits"));
         }
@@ -248,7 +251,7 @@ struct ReplayIdentity {
 /// An admitted original and its reproduction context, holding exclusive campaign
 /// ownership until dropped. Callers need no manifest filenames or JSON paths.
 pub struct ReplayContext {
-    original: PathBuf,
+    original: String,
     directory: PathBuf,
     identity: serde_json::Value,
     environment: serde_json::Value,
@@ -279,11 +282,11 @@ impl ReplayContext {
         let selection = serde_json::from_value(manifest.identity.environment["selection"].clone())?;
         let identity = serde_json::to_value(&manifest.identity)?;
         let store = ArtifactStore::open_matching(&directory, &identity)?;
-        let record = store.load_original(
-            original
-                .to_str()
-                .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?,
-        )?;
+        let original = original
+            .to_str()
+            .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?
+            .to_owned();
+        let record = store.load_original(&original)?;
         if record["test_id"] != manifest.identity.target {
             return Err(io::Error::other(
                 "finding target does not match store identity",
@@ -315,9 +318,9 @@ impl ReplayContext {
         }
         Ok(())
     }
-    /// Original path stays valid within the locked reproduction namespace.
+    /// Validated UTF-8 original path within the locked reproduction namespace.
     #[must_use]
-    pub fn original(&self) -> &Path {
+    pub fn original(&self) -> &str {
         &self.original
     }
     /// Namespace used by the executor for write-once derivative evidence.

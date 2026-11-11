@@ -44,3 +44,4 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 proptest = "1"
+rstest = { version = "0.28.0", default-features = false }

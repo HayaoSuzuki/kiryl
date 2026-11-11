@@ -198,14 +198,21 @@ impl Drop for Group {
 mod tests {
     use super::*;
 
-    #[test]
-    fn explicit_parent_must_contain_controller_and_stay_in_mount() {
+    #[rstest::rstest]
+    #[case("/sys/fs/cgroup/delegated", true)]
+    #[case("/sys/fs/cgroup/delegated/controller", true)]
+    #[case("/sys/fs/cgroup/other", false)]
+    #[case("/sys/fs", false)]
+    #[case("relative", false)]
+    fn explicit_parent_must_contain_controller_and_stay_in_mount(
+        #[case] parent: &str,
+        #[case] valid: bool,
+    ) {
         let mount = Path::new("/sys/fs/cgroup");
         let current = Path::new("/sys/fs/cgroup/delegated/controller");
-        assert!(validate_parent(Path::new("/sys/fs/cgroup/delegated"), mount, current).is_ok());
-        assert!(validate_parent(current, mount, current).is_ok());
-        assert!(validate_parent(Path::new("/sys/fs/cgroup/other"), mount, current).is_err());
-        assert!(validate_parent(Path::new("/sys/fs"), mount, current).is_err());
-        assert!(validate_parent(Path::new("relative"), mount, current).is_err());
+        assert_eq!(
+            validate_parent(Path::new(parent), mount, current).is_ok(),
+            valid
+        );
     }
 }

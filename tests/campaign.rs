@@ -1,9 +1,14 @@
 use kiryl::campaign::choose_next;
-#[test]
-fn least_charged_unfinished_target_gets_next_slice() {
-    assert_eq!(choose_next(&[40, 0, 20], &[false, false, false]), Some(1));
-    assert_eq!(choose_next(&[40, 0, 20], &[false, true, false]), Some(2));
-    assert_eq!(choose_next(&[40], &[true]), None);
+#[rstest::rstest]
+#[case::least_charged(vec![40, 0, 20], vec![false, false, false], Some(1))]
+#[case::skip_finished(vec![40, 0, 20], vec![false, true, false], Some(2))]
+#[case::all_finished(vec![40], vec![true], None)]
+fn least_charged_unfinished_target_gets_next_slice(
+    #[case] charged: Vec<u128>,
+    #[case] finished: Vec<bool>,
+    #[case] expected: Option<usize>,
+) {
+    assert_eq!(choose_next(&charged, &finished), expected);
 }
 
 #[test]

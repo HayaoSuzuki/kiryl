@@ -49,3 +49,10 @@ experiments/python-fuzzing/results/
 /fuzz/coverage/
 /.kiryl/
 /product-evidence/
+
+# Instrumented coverage profiles and reports
+.coverage*
+htmlcov/
+coverage.xml
+*.profraw
+*.profdata
