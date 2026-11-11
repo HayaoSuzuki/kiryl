@@ -166,25 +166,17 @@ def _dispatch(control: BinaryIO, request: dict[str, object]) -> None:
 def main() -> None:
     """Dispatch an attached worker operation without exposing target stdout."""
     control, request = _bootstrap()
-    from adapter import CaseResult  # noqa: PLC0415 -- after attachment
-    from hypothesis.core import skip_exceptions_to_reraise  # noqa: PLC0415 -- after attachment
+    from runtime import validate_runtime  # noqa: PLC0415 -- after resource attachment
 
     try:
-        import hypothesis  # noqa: PLC0415 -- after resource attachment
-        import pytest  # noqa: PLC0415 -- after resource attachment
+        validate_runtime()
+    except RuntimeError as error:
+        send(control, {"kind": "error", "message": str(error)})
+        return
+    from adapter import CaseResult  # noqa: PLC0415 -- admitted runtime
+    from hypothesis.core import skip_exceptions_to_reraise  # noqa: PLC0415
 
-        if (
-            sys.implementation.name != "cpython"
-            or sys.version_info[:2] not in ((3, 14), (3, 15))
-            or not sys._is_gil_enabled()  # noqa: SLF001 -- CPython runtime capability
-            or hypothesis.__version__ != "6.170.13"
-            or pytest.__version__ != "9.2.0"
-        ):
-            send(
-                control,
-                {"kind": "error", "message": "unsupported Python/pytest/Hypothesis runtime"},
-            )
-            return
+    try:
         _dispatch(control, request)
     except skip_exceptions_to_reraise():
         Driver(control).observe(CaseResult(cast("str", request["test_id"]), "skip"))

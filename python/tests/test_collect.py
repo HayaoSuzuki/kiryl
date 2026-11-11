@@ -72,3 +72,22 @@ def test_source_snapshot_changes_and_excludes_environment(tmp_path: Path) -> Non
     assert set(before) == {"app.py"}
     source.write_text("value = 2\n")
     assert source_hashes(tmp_path) != before
+
+
+def test_unsupported_runtime_rejects_before_target_import(tmp_path: Path) -> None:
+    """Incompatible dependencies cannot execute project collection hooks or tests."""
+    marker = tmp_path / "imported.txt"
+    (tmp_path / "test_target.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('imported')\n"
+    )
+    script = (
+        "import hypothesis,sys;hypothesis.__version__='unsupported';"
+        f"sys.path.insert(0,{str(COLLECT.parent)!r});"
+        f"sys.argv=['collect',{str(tmp_path)!r}];import collect;collect.main()"
+    )
+    result = subprocess.run(  # noqa: S603 -- owned bootstrap and target
+        [sys.executable, "-c", script], capture_output=True, check=False, timeout=10
+    )
+    assert result.returncode != 0
+    assert not marker.exists()
+    assert "unsupported" in json.loads(result.stdout)["error"]

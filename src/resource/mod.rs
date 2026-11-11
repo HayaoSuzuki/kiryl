@@ -24,6 +24,7 @@ pub struct Capabilities {
     pub tree_memory_hard: bool,
     pub tree_cleanup: bool,
     pub backend: String,
+    pub oom_evidence_complete: bool,
     pub reason: Option<String>,
 }
 impl Capabilities {
@@ -32,6 +33,7 @@ impl Capabilities {
             tree_memory_hard: false,
             tree_cleanup: false,
             backend: "portable".into(),
+            oom_evidence_complete: false,
             reason: Some(reason),
         }
     }
@@ -41,6 +43,7 @@ impl Capabilities {
             tree_memory_hard: true,
             tree_cleanup: true,
             backend: backend.into(),
+            oom_evidence_complete: cfg!(target_os = "linux"),
             reason: None,
         }
     }

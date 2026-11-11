@@ -162,6 +162,27 @@ impl ArtifactStore {
     /// # Errors
     /// Rejects foreign paths, non-original records, unknown schemas and oversized evidence.
     pub fn derived(&mut self, original: &str, evidence: &serde_json::Value) -> io::Result<String> {
+        let record = self.load_original(original)?;
+        let test_id = &record["test_id"];
+        let name = Path::new(original)
+            .file_name()
+            .ok_or_else(|| io::Error::other("missing finding filename"))?
+            .to_string_lossy();
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":1,"original":name,"test_id":test_id,"evidence":evidence}),
+        )?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(io::Error::other("derived evidence exceeds limits"));
+        }
+        self.save(&bytes, "evidence")?
+            .into_os_string()
+            .into_string()
+            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
+    }
+    /// Validate and load an original before starting a replay worker.
+    /// # Errors
+    /// Rejects foreign, oversized, malformed or unsupported original records.
+    pub fn load_original(&self, original: &str) -> io::Result<serde_json::Value> {
         let path = Path::new(original);
         let name = path
             .file_name()
@@ -180,7 +201,7 @@ impl ArtifactStore {
             ));
         }
         let record: serde_json::Value = serde_json::from_slice(&read_bounded(path, 1024 * 1024)?)?;
-        let test_id = record
+        let _test_id = record
             .get("test_id")
             .and_then(serde_json::Value::as_str)
             .filter(|id| !id.is_empty() && id.len() <= 16 * 1024)
@@ -197,16 +218,7 @@ impl ArtifactStore {
         {
             return Err(io::Error::other("incompatible original record"));
         }
-        let bytes = serde_json::to_vec(
-            &serde_json::json!({"version":1,"original":name,"test_id":test_id,"evidence":evidence}),
-        )?;
-        if bytes.len() > 1024 * 1024 {
-            return Err(io::Error::other("derived evidence exceeds limits"));
-        }
-        self.save(&bytes, "evidence")?
-            .into_os_string()
-            .into_string()
-            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
+        Ok(record)
     }
     /// Save exact active input before attempting verification or shrinking.
     /// # Errors

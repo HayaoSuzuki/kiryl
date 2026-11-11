@@ -12,12 +12,13 @@ use std::{
 };
 
 /// Select the least charged unfinished target, keeping overshoot as future debt.
+/// Charges without a corresponding target status are ineligible.
 #[must_use]
 pub fn choose_next(charged: &[u128], stopped: &[bool]) -> Option<usize> {
     charged
         .iter()
         .enumerate()
-        .filter(|(i, _)| !stopped[*i])
+        .filter(|(i, _)| !stopped.get(*i).copied().unwrap_or(true))
         .min_by_key(|(_, time)| **time)
         .map(|(i, _)| i)
 }

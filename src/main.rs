@@ -19,7 +19,7 @@ fn milliseconds(value: &str) -> io::Result<u64> {
     let seconds: f64 = value
         .parse()
         .map_err(|_| invalid("duration must be seconds"))?;
-    if !seconds.is_finite() || seconds <= 0.0 || seconds > 1e12 {
+    if !seconds.is_finite() || seconds < 0.001 || seconds > 1e12 {
         return Err(invalid("duration must be finite and positive"));
     }
     std::time::Duration::from_secs_f64(seconds)
@@ -86,6 +86,11 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             return Err(invalid("expected one finding").into());
         }
     }
+    if limits.tree_memory_bytes == 0 || limits.retained_output_bytes > 16 * 1024 * 1024 {
+        return Err(
+            invalid("memory must be positive and retained output cannot exceed 16 MiB").into(),
+        );
+    }
     if command != "run" && selection.is_empty() {
         let path = PathBuf::from(finding.as_ref().ok_or_else(|| invalid("missing finding"))?);
         let parent = path
@@ -115,7 +120,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     if targets.is_empty() {
         return Err(invalid("selection contains no supported Hypothesis tests").into());
     }
-    let identity = json!({"environment":discovered["environment"],"sources":discovered["sources"],"selection":selection});
+    let identity = json!({"environment":discovered["environment"],"sources":discovered["sources"],"implementation_sources":discovered["implementation_sources"],"selection":selection});
     let environment_identity = identity.clone();
     let remaining_execution_limits = serde_json::to_value(&limits)?;
     let mut report = if command == "run" {
@@ -221,4 +226,16 @@ fn main() {
         }
     });
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::milliseconds;
+    #[test]
+    fn reject_durations_below_clock_resolution() {
+        assert!(milliseconds("0.00001").is_err());
+        assert!(milliseconds("NaN").is_err());
+        assert!(milliseconds("-1").is_err());
+        assert_eq!(milliseconds("0.001").unwrap(), 1);
+    }
 }

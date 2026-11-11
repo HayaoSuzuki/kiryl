@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 
     from hypothesis.internal.conjecture.shrinker import Shrinker
 
-SUPPORTED_VERSION = "6.170.13"
+from runtime import HYPOTHESIS_VERSION
+
+SUPPORTED_VERSION = HYPOTHESIS_VERSION
 
 
 class _Prefix(TypedDict, total=False):

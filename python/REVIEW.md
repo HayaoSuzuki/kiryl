@@ -140,3 +140,66 @@ Five design/test review passes:
 Final verification after cargo build --locked --quiet: native macOS arm64
 CPython 3.14.9, 65 tests passed in 17.70 seconds. Ruff check, format check (16
 files) and ty check all passed. No CPython 3.15 or other-OS acceptance claim.
+
+## OS-facing CLI regression additions
+
+Added actual product CLI tests for FD-level non-UTF-8 stdout/stderr plus child
+output under a combined 1024-byte retention budget, native abort preserving the
+exact initial candidate with fresh raw replay, and untimed POSIX SIGINT yielding
+exit 130 plus interrupted report. Conditional tests exercise Windows direct
+GetStdHandle/WriteFile output and Linux worker-descendant cleanup after timeout.
+The latter recognizes Linux zombie state as exited, and always attempts cleanup
+of its spawned PID on test failure. Windows console-interrupt remains a native acceptance gap; no macOS assertion claims a
+hard tree cleanup capability which the portable backend does not provide.
+A separate Windows Job Object cleanup test now checks descendant status using
+OpenProcess/GetExitCodeProcess, rejects permission-denial ambiguity and cleans
+up on failure. It is conditionally skipped locally and requires native CI.
+
+Five review passes checked (1) real process execution versus mocked outcomes,
+(2) bounded combined log assertions including binary/descendant output,
+(3) immutable exact crash input and fresh-worker replay semantics, (4) interrupt
+synchronization on a target-created marker rather than a fixed startup sleep,
+and (5) platform-specific skips and failure cleanup. The raw replay test exposed
+an executor report-classification bug (native abort called failure), corrected
+by the parent agent. These additions do not establish other-OS success locally.
+
+Latest local full suite before the final Windows-only conditional addition: 68
+passed, 2 skipped in 20.41s. The Windows-only addition was checked with ty and
+collected locally: two Windows tests skipped as expected.
+
+## CI slice-counter assertion correction
+
+Native macOS CI exposed that the last-slice report can have useful=0 after
+previous slices executed useful cases. The corpus restart and output tests now
+assert target totals.useful, the controller's aggregate campaign counter,
+without increasing durations. Rebuilt current binary and ran those two focused
+CLI tests: 2 passed, 10 deselected in 6.31 seconds. Ruff check, format check and
+ty passed. This corrects the observation scope rather than weakening the
+requirement that useful work actually occurred.
+
+## CI campaign-output assertion correction
+
+macOS 3.15 and Windows 3.14 CI exposed the analogous last-slice log issue: an
+empty final slice does not erase earlier output. FD/descendant and Win32 handle
+tests now assert campaign retained_output.tail, observed and truncated, while
+retaining the separate last-slice combined-cap assertion. Durations are unchanged.
+Rebuilt latest binary: focused output tests yielded 1 passed, 1 Windows skip,
+10 deselected in 2.43 seconds on macOS 3.14. Ruff check, format check and ty passed.
+Native Windows execution of the revised assertion is delegated to CI.
+
+## Shared runtime admission before collection
+
+A new subprocess regression monkeypatches Hypothesis's version and supplies a
+target that creates an import marker. Before the fix collection returned zero
+and executed the target; the regression failed. runtime.py now owns interpreter,
+GIL, pytest and Hypothesis admission. Collection validates before pytest.main;
+worker validates before importing adapter/Hypothesis internal bridge. The bridge
+uses the same Hypothesis version constant rather than duplicating a pin.
+Unsupported collection runtime returns structured JSON error with exit 2.
+
+Five review passes checked admission order, deferred dependency imports after
+resource/stream reservation, shared pin ownership, JSON rejection behavior and
+marker strength. Selection's hook class was moved out of main to keep its
+collection responsibility explicit without adding a pass-through API.
+Verification: collection/bootstrap/replay targeted suites 22 passed in 4.86s;
+Ruff check, format and ty passed. Native matrix rerun is owned by the parent.

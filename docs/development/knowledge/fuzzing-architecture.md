@@ -16,19 +16,19 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: 3f0d0138abafc5224101cd21abda206f9be03dfcfbefc7a114a990645c7679b2
+  sha256: dc0780c742210f90984b98fda6bac99b968cd9badbbc74e384ed8bf8924344ff
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: 78c7e36844088dff82098ec9b777fb58bf4957c97efb44fe1e4a252314c6d868
+  sha256: 00d0889053861743b140f6d8466395f42ad6c013b419f0aaf9ec09868ff6724e
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
-  sha256: b1849699d0fc4e18cb850788f3860a31ec4529b5d705d3f2b09042b598a2251f
+  sha256: c47f8715519776ada1dcdcbc0ac521d2e23e1aec4b38ba75d712d4a27414581a
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
   working_tree: modified
-  sha256: a997e9235fbe009135cf9d7b07af3086b63629a7c84654cc48df58c2fe25a61b
+  sha256: 9f6201f6da6e282f90ce91590572272f7dccbf6f26f0ea1c9d199f816cba2015
 ---
 # Selected direction
 

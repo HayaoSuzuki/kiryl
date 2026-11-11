@@ -4,6 +4,7 @@
 import json
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,7 @@ def test_passing_run_restarts_persistent_corpus(tmp_path: Path) -> None:
     )
     code, report = run(tmp_path)
     assert code in (0, 1)
-    assert report["targets"][0]["report"]["useful"] > 0
+    assert report["targets"][0]["totals"]["useful"] > 0
     corpus = tmp_path / "store" / "target-0" / "corpus.json"
     assert json.loads(corpus.read_text())
     code, _ = run(tmp_path, "restart")
@@ -216,9 +217,11 @@ def test_output(n):
     assert code in (0, 1)
     logs = report["targets"][0]["report"]["logs"]
     assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004 -- configured limit
-    assert sum(log["observed"] for log in logs) > 1024  # noqa: PLR2004
-    assert any(log["truncated"] for log in logs)
-    assert report["targets"][0]["report"]["useful"] > 0
+    retained = report["targets"][0]["retained_output"]
+    assert len(retained["tail"]) <= 1024  # noqa: PLR2004 -- campaign retention bound
+    assert retained["observed"] > 1024  # noqa: PLR2004 -- configured limit
+    assert retained["truncated"] is True
+    assert report["targets"][0]["totals"]["useful"] > 0
 
 
 def test_native_crash_original_and_fresh_raw_replay(tmp_path: Path) -> None:
@@ -327,4 +330,117 @@ def test_handle(n):
     assert code in (0, 1)
     logs = report["targets"][0]["report"]["logs"]
     assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004
-    assert any(log["truncated"] for log in logs)
+    retained = report["targets"][0]["retained_output"]
+    assert len(retained["tail"]) <= 1024  # noqa: PLR2004 -- campaign retention bound
+    assert retained["observed"] > 1024  # noqa: PLR2004 -- configured limit
+    assert retained["truncated"] is True
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="native Linux process-tree cleanup")
+def test_timeout_cleans_worker_descendant_tree(tmp_path: Path) -> None:
+    """A worker timeout cannot leave its descendant running outside its lifetime."""
+    import os  # noqa: PLC0415 -- native process inspection
+    import signal  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    pid_file = tmp_path / "child.txt"
+    project(
+        tmp_path,
+        "import subprocess, sys, time\nfrom pathlib import Path\n"
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_tree(n):\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'])\n"
+        f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        "    time.sleep(60)\n",
+    )
+    try:
+        result = invoke(
+            tmp_path,
+            "run",
+            "test_target.py",
+            "--best-effort",
+            "--duration",
+            "2",
+            "--case-timeout",
+            "0.2",
+            "--store",
+            str(tmp_path / "store"),
+            "--report",
+            str(tmp_path / "tree.json"),
+        )
+        assert result.returncode == 1, result.stderr
+        child_pid = int(pid_file.read_text())
+        report = json.loads((tmp_path / "tree.json").read_text())
+        assert report["targets"][0]["report"]["capabilities"]["tree_cleanup"] is True
+        deadline = time.monotonic() + 2
+        status = Path(f"/proc/{child_pid}/status")
+        while (
+            status.exists()
+            and "State:\tZ" not in status.read_text()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        assert not status.exists() or "State:\tZ" in status.read_text()
+    finally:
+        if pid_file.exists():
+            with suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows Job Object descendant cleanup")
+def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
+    """Terminating a worker job also terminates the Python child it created."""
+    import ctypes  # noqa: PLC0415 -- native Windows process status
+    import os  # noqa: PLC0415
+    import signal  # noqa: PLC0415
+
+    pid_file = tmp_path / "child.txt"
+    project(
+        tmp_path,
+        "import subprocess, sys, time\nfrom pathlib import Path\n"
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_job(n):\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(60)'])\n"
+        f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        "    time.sleep(60)\n",
+    )
+    if sys.platform != "win32":
+        pytest.skip("Windows native process status")
+    handle = None
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
+    kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+    try:
+        result = invoke(
+            tmp_path,
+            "run",
+            "test_target.py",
+            "--best-effort",
+            "--duration",
+            "2",
+            "--case-timeout",
+            "0.2",
+            "--store",
+            str(tmp_path / "store"),
+            "--report",
+            str(tmp_path / "job.json"),
+        )
+        assert result.returncode == 1, result.stderr
+        child_pid = int(pid_file.read_text())
+        report = json.loads((tmp_path / "job.json").read_text())
+        assert report["targets"][0]["report"]["capabilities"]["tree_cleanup"] is True
+        handle = kernel.OpenProcess(0x1000, 0, child_pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if handle:
+            code = ctypes.c_uint32()
+            assert kernel.GetExitCodeProcess(handle, ctypes.byref(code))
+            assert code.value != 259  # noqa: PLR2004 -- STILL_ACTIVE
+        else:
+            assert ctypes.get_last_error() in (87, 1168)  # absent PID, not permission denial
+    finally:
+        if handle:
+            kernel.CloseHandle(handle)
+        if pid_file.exists():
+            with suppress(ProcessLookupError, PermissionError):
+                os.kill(int(pid_file.read_text()), signal.SIGTERM)

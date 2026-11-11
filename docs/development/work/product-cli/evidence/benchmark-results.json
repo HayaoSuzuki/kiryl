@@ -1,0 +1,3812 @@
+{
+  "revision": "f6aa6cd660da3e6b43b87fa40c3e14777e8e6312",
+  "working_tree": true,
+  "platform": "macOS-15.7.7-arm64-arm-64bit",
+  "environment": {
+    "python": "3.14.9 (main, Oct 21 2026, 17:47:42) [Clang 23.1.3 ]",
+    "hypothesis": "6.170.13",
+    "pytest": "9.2.0"
+  },
+  "seed": 17,
+  "requested_seconds_per_phase": 30,
+  "rss_sampling_interval_s": 0.5,
+  "source_sha256_before": {
+    "Cargo.lock": "f9e8eb4e8c2844d9ea4e0b59544618b309cf6e55acd27d26635b74197fd9996c",
+    "python/uv.lock": "fe23bf33eb5e08f40dfe71a3e41b483bcd77a721f4d0d68752db75b33cc1a47f",
+    "target/debug/kiryl": "694b581f778ff100c5870432f68ac007520222a8cad93f681bb9010814044671",
+    "src/artifacts.rs": "b1849699d0fc4e18cb850788f3860a31ec4529b5d705d3f2b09042b598a2251f",
+    "src/campaign.rs": "3f0d0138abafc5224101cd21abda206f9be03dfcfbefc7a114a990645c7679b2",
+    "src/executor.rs": "78c7e36844088dff82098ec9b777fb58bf4957c97efb44fe1e4a252314c6d868",
+    "src/lib.rs": "d2e689bf8680fbcd1f0be7cd2e300f3ae5f7cccc9d68a628ecd0ecfe6029dc59",
+    "src/main.rs": "7ca73f460480e73a7a6f148148a74d0c1d0b56f25f4e11c9c7e981e27aa9b500",
+    "src/resource/linux.rs": "e6ad3966b3165e37696e4a4e42f2df79af750a0ac5fe9b3be204635c631eb7ac",
+    "src/resource/mod.rs": "1d37fc3e2766255dcc0a65c54f9723bd5a62f142ded3bb2b2d6a2bfa60607fcf",
+    "src/resource/portable.rs": "9c2d7f3291e003060f40219ae7b46fa616f0367ae75c8c8769fd7d96c776bbe2",
+    "src/resource/windows.rs": "87366e796d911476d834fcfc957759ee00f01240dd6b1d6198a0139979ac1848",
+    "src/search.rs": "5942ffa5a80f96cd02edc5005e92f0141b559846e2b8bbbbea43448ff07ad9d4",
+    "src/wire.rs": "215961b83986245a935e144e05d51c667b4482c079561ac11f174659a91a0723",
+    "python/kiryl_adapter/__init__.py": "3ce3eb71467fb58cbecaf875a1c8130243138ec4c5e7995d29b9f6dc50ef9e19",
+    "python/kiryl_adapter/adapter.py": "afd2f01bee99e24f0f67e4174a9138949fadb722a5f3cca6387baed91c015533",
+    "python/kiryl_adapter/collect.py": "5068005b5fc958f11a2c858a9189288be1fc1184b4a66465238bd8569d60e15e",
+    "python/kiryl_adapter/hypothesis_bridge.py": "b58ef32c29692cd9d3d6138f315a865cd92fc2cf48cd7fd594f37feeaf0d04e7",
+    "python/kiryl_adapter/monitor.py": "fc6c5cbf33ada4a7c0aaf77154d431f0aa76eba15009505a82c4dca3e450fac3",
+    "python/kiryl_adapter/wire.py": "012c1253559b4dea3311949c2487028fb9af95c5a18e97b7778f9fb184631925",
+    "python/kiryl_adapter/worker.py": "a997e9235fbe009135cf9d7b07af3086b63629a7c84654cc48df58c2fe25a61b",
+    "docs/development/work/product-cli/evidence/benchmark-fixture.py": "9d386239de595012051f1886d9397b612bce07e5be8e6ee3f75870ce3b6179e2",
+    "docs/development/work/product-cli/evidence/benchmark-application.py": "02c82a8717053f987bfc93899b4a39d1e6b3eaa91067986026631dde8356e200",
+    "docs/development/work/product-cli/evidence/benchmark-run.py": "6036ba6723b2d3be3402151cc2866200817ce6c1e31b3cfff46d510bd44f3af2"
+  },
+  "source_sha256_after": {
+    "Cargo.lock": "f9e8eb4e8c2844d9ea4e0b59544618b309cf6e55acd27d26635b74197fd9996c",
+    "python/uv.lock": "fe23bf33eb5e08f40dfe71a3e41b483bcd77a721f4d0d68752db75b33cc1a47f",
+    "target/debug/kiryl": "93cb8474659dee1988b467fe37bbadd915d30bc33485aab82b455b02ea7d25ff",
+    "src/artifacts.rs": "b1849699d0fc4e18cb850788f3860a31ec4529b5d705d3f2b09042b598a2251f",
+    "src/campaign.rs": "3f0d0138abafc5224101cd21abda206f9be03dfcfbefc7a114a990645c7679b2",
+    "src/executor.rs": "78c7e36844088dff82098ec9b777fb58bf4957c97efb44fe1e4a252314c6d868",
+    "src/lib.rs": "d2e689bf8680fbcd1f0be7cd2e300f3ae5f7cccc9d68a628ecd0ecfe6029dc59",
+    "src/main.rs": "7ca73f460480e73a7a6f148148a74d0c1d0b56f25f4e11c9c7e981e27aa9b500",
+    "src/resource/linux.rs": "e6ad3966b3165e37696e4a4e42f2df79af750a0ac5fe9b3be204635c631eb7ac",
+    "src/resource/mod.rs": "1d37fc3e2766255dcc0a65c54f9723bd5a62f142ded3bb2b2d6a2bfa60607fcf",
+    "src/resource/portable.rs": "9c2d7f3291e003060f40219ae7b46fa616f0367ae75c8c8769fd7d96c776bbe2",
+    "src/resource/windows.rs": "87366e796d911476d834fcfc957759ee00f01240dd6b1d6198a0139979ac1848",
+    "src/search.rs": "5942ffa5a80f96cd02edc5005e92f0141b559846e2b8bbbbea43448ff07ad9d4",
+    "src/wire.rs": "215961b83986245a935e144e05d51c667b4482c079561ac11f174659a91a0723",
+    "python/kiryl_adapter/__init__.py": "3ce3eb71467fb58cbecaf875a1c8130243138ec4c5e7995d29b9f6dc50ef9e19",
+    "python/kiryl_adapter/adapter.py": "afd2f01bee99e24f0f67e4174a9138949fadb722a5f3cca6387baed91c015533",
+    "python/kiryl_adapter/collect.py": "5068005b5fc958f11a2c858a9189288be1fc1184b4a66465238bd8569d60e15e",
+    "python/kiryl_adapter/hypothesis_bridge.py": "b58ef32c29692cd9d3d6138f315a865cd92fc2cf48cd7fd594f37feeaf0d04e7",
+    "python/kiryl_adapter/monitor.py": "fc6c5cbf33ada4a7c0aaf77154d431f0aa76eba15009505a82c4dca3e450fac3",
+    "python/kiryl_adapter/wire.py": "012c1253559b4dea3311949c2487028fb9af95c5a18e97b7778f9fb184631925",
+    "python/kiryl_adapter/worker.py": "a997e9235fbe009135cf9d7b07af3086b63629a7c84654cc48df58c2fe25a61b",
+    "docs/development/work/product-cli/evidence/benchmark-fixture.py": "9d386239de595012051f1886d9397b612bce07e5be8e6ee3f75870ce3b6179e2",
+    "docs/development/work/product-cli/evidence/benchmark-application.py": "02c82a8717053f987bfc93899b4a39d1e6b3eaa91067986026631dde8356e200",
+    "docs/development/work/product-cli/evidence/benchmark-run.py": "6036ba6723b2d3be3402151cc2866200817ce6c1e31b3cfff46d510bd44f3af2"
+  },
+  "product": {
+    "command": [
+      "/private/tmp/kiryl-product-cli/target/debug/kiryl",
+      "run",
+      "test_branches.py",
+      "--python",
+      "/private/tmp/kiryl-product-cli/python/.venv/bin/python",
+      "--best-effort",
+      "--duration",
+      "30",
+      "--seed",
+      "17",
+      "--store",
+      "/var/folders/f0/ldy1m0vn1f1g4w873rm313xr0000gn/T/kiryl-benchmark-8lp2k5oc/product/store",
+      "--report",
+      "/private/tmp/kiryl-product-cli/docs/development/work/product-cli/evidence/benchmark-product-report.json"
+    ],
+    "elapsed_s": 30.173439583042637,
+    "exit_code": 1,
+    "interrupt_at_deadline": false,
+    "samples": [
+      {
+        "elapsed_s": 0.001,
+        "rss_kib": 1904,
+        "stored_bytes": 1612
+      },
+      {
+        "elapsed_s": 0.521,
+        "rss_kib": 57504,
+        "stored_bytes": 10829
+      },
+      {
+        "elapsed_s": 1.038,
+        "rss_kib": 58144,
+        "stored_bytes": 10829
+      },
+      {
+        "elapsed_s": 1.56,
+        "rss_kib": 57296,
+        "stored_bytes": 12705
+      },
+      {
+        "elapsed_s": 2.077,
+        "rss_kib": 57536,
+        "stored_bytes": 12705
+      },
+      {
+        "elapsed_s": 2.597,
+        "rss_kib": 57072,
+        "stored_bytes": 12918
+      },
+      {
+        "elapsed_s": 3.115,
+        "rss_kib": 58832,
+        "stored_bytes": 12918
+      },
+      {
+        "elapsed_s": 3.637,
+        "rss_kib": 33296,
+        "stored_bytes": 13167
+      },
+      {
+        "elapsed_s": 4.153,
+        "rss_kib": 59392,
+        "stored_bytes": 13167
+      },
+      {
+        "elapsed_s": 4.676,
+        "rss_kib": 59936,
+        "stored_bytes": 13167
+      },
+      {
+        "elapsed_s": 5.197,
+        "rss_kib": 62032,
+        "stored_bytes": 13399
+      },
+      {
+        "elapsed_s": 5.719,
+        "rss_kib": 62224,
+        "stored_bytes": 13399
+      },
+      {
+        "elapsed_s": 6.241,
+        "rss_kib": 60784,
+        "stored_bytes": 13629
+      },
+      {
+        "elapsed_s": 6.763,
+        "rss_kib": 60912,
+        "stored_bytes": 13629
+      },
+      {
+        "elapsed_s": 7.283,
+        "rss_kib": 60560,
+        "stored_bytes": 13841
+      },
+      {
+        "elapsed_s": 7.802,
+        "rss_kib": 60912,
+        "stored_bytes": 13841
+      },
+      {
+        "elapsed_s": 8.324,
+        "rss_kib": 59136,
+        "stored_bytes": 14089
+      },
+      {
+        "elapsed_s": 8.844,
+        "rss_kib": 60720,
+        "stored_bytes": 14089
+      },
+      {
+        "elapsed_s": 9.367,
+        "rss_kib": 30784,
+        "stored_bytes": 14316
+      },
+      {
+        "elapsed_s": 9.886,
+        "rss_kib": 60832,
+        "stored_bytes": 14316
+      },
+      {
+        "elapsed_s": 10.405,
+        "rss_kib": 61136,
+        "stored_bytes": 14316
+      },
+      {
+        "elapsed_s": 10.926,
+        "rss_kib": 61376,
+        "stored_bytes": 14551
+      },
+      {
+        "elapsed_s": 11.448,
+        "rss_kib": 61632,
+        "stored_bytes": 14551
+      },
+      {
+        "elapsed_s": 11.969,
+        "rss_kib": 60544,
+        "stored_bytes": 14769
+      },
+      {
+        "elapsed_s": 12.491,
+        "rss_kib": 60944,
+        "stored_bytes": 14769
+      },
+      {
+        "elapsed_s": 13.012,
+        "rss_kib": 60864,
+        "stored_bytes": 15000
+      },
+      {
+        "elapsed_s": 13.53,
+        "rss_kib": 61312,
+        "stored_bytes": 15000
+      },
+      {
+        "elapsed_s": 14.052,
+        "rss_kib": 60848,
+        "stored_bytes": 15244
+      },
+      {
+        "elapsed_s": 14.575,
+        "rss_kib": 61680,
+        "stored_bytes": 15244
+      },
+      {
+        "elapsed_s": 15.093,
+        "rss_kib": 34752,
+        "stored_bytes": 15493
+      },
+      {
+        "elapsed_s": 15.612,
+        "rss_kib": 61568,
+        "stored_bytes": 15493
+      },
+      {
+        "elapsed_s": 16.132,
+        "rss_kib": 61760,
+        "stored_bytes": 15493
+      },
+      {
+        "elapsed_s": 16.652,
+        "rss_kib": 63392,
+        "stored_bytes": 15725
+      },
+      {
+        "elapsed_s": 17.176,
+        "rss_kib": 63664,
+        "stored_bytes": 15725
+      },
+      {
+        "elapsed_s": 17.695,
+        "rss_kib": 62656,
+        "stored_bytes": 15973
+      },
+      {
+        "elapsed_s": 18.215,
+        "rss_kib": 63088,
+        "stored_bytes": 15973
+      },
+      {
+        "elapsed_s": 18.736,
+        "rss_kib": 62176,
+        "stored_bytes": 16204
+      },
+      {
+        "elapsed_s": 19.256,
+        "rss_kib": 62256,
+        "stored_bytes": 16204
+      },
+      {
+        "elapsed_s": 19.777,
+        "rss_kib": 49664,
+        "stored_bytes": 16433
+      },
+      {
+        "elapsed_s": 20.294,
+        "rss_kib": 61632,
+        "stored_bytes": 16433
+      },
+      {
+        "elapsed_s": 20.814,
+        "rss_kib": 61648,
+        "stored_bytes": 16433
+      },
+      {
+        "elapsed_s": 21.334,
+        "rss_kib": 62000,
+        "stored_bytes": 16661
+      },
+      {
+        "elapsed_s": 21.854,
+        "rss_kib": 62160,
+        "stored_bytes": 16661
+      },
+      {
+        "elapsed_s": 22.37,
+        "rss_kib": 61936,
+        "stored_bytes": 16901
+      },
+      {
+        "elapsed_s": 22.887,
+        "rss_kib": 62048,
+        "stored_bytes": 16901
+      },
+      {
+        "elapsed_s": 23.405,
+        "rss_kib": 61504,
+        "stored_bytes": 17148
+      },
+      {
+        "elapsed_s": 23.923,
+        "rss_kib": 61616,
+        "stored_bytes": 17148
+      },
+      {
+        "elapsed_s": 24.448,
+        "rss_kib": 59712,
+        "stored_bytes": 17396
+      },
+      {
+        "elapsed_s": 24.969,
+        "rss_kib": 60976,
+        "stored_bytes": 17396
+      },
+      {
+        "elapsed_s": 25.491,
+        "rss_kib": 37168,
+        "stored_bytes": 17644
+      },
+      {
+        "elapsed_s": 26.011,
+        "rss_kib": 60896,
+        "stored_bytes": 17644
+      },
+      {
+        "elapsed_s": 26.531,
+        "rss_kib": 61072,
+        "stored_bytes": 17644
+      },
+      {
+        "elapsed_s": 27.052,
+        "rss_kib": 59520,
+        "stored_bytes": 17889
+      },
+      {
+        "elapsed_s": 27.57,
+        "rss_kib": 59680,
+        "stored_bytes": 17889
+      },
+      {
+        "elapsed_s": 28.088,
+        "rss_kib": 61376,
+        "stored_bytes": 18127
+      },
+      {
+        "elapsed_s": 28.608,
+        "rss_kib": 61616,
+        "stored_bytes": 18127
+      },
+      {
+        "elapsed_s": 29.13,
+        "rss_kib": 61456,
+        "stored_bytes": 18345
+      },
+      {
+        "elapsed_s": 29.654,
+        "rss_kib": 61744,
+        "stored_bytes": 18345
+      }
+    ],
+    "peak_sampled_tree_rss_kib": 63664,
+    "stored_bytes": 18675,
+    "sessions": [
+      {
+        "pid": 64352,
+        "calls": 0,
+        "paths": []
+      },
+      {
+        "pid": 64355,
+        "calls": 4349,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64360,
+        "calls": 4271,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64365,
+        "calls": 4304,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64370,
+        "calls": 4218,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64376,
+        "calls": 3895,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64381,
+        "calls": 4310,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64388,
+        "calls": 4205,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64402,
+        "calls": 4281,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64407,
+        "calls": 4373,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64413,
+        "calls": 4313,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64418,
+        "calls": 4382,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64423,
+        "calls": 4386,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64428,
+        "calls": 4457,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64433,
+        "calls": 4247,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64454,
+        "calls": 3166,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64509,
+        "calls": 4134,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64521,
+        "calls": 4040,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64549,
+        "calls": 4281,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64555,
+        "calls": 4275,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64570,
+        "calls": 4278,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64575,
+        "calls": 4207,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64580,
+        "calls": 4442,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64585,
+        "calls": 4455,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64591,
+        "calls": 4339,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      },
+      {
+        "pid": 64596,
+        "calls": 3929,
+        "paths": [
+          "negative-even-large",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      }
+    ],
+    "observed_property_calls": 105537,
+    "observed_paths": [
+      "negative-even-large",
+      "negative-odd",
+      "positive-even",
+      "positive-odd",
+      "positive-seven-large",
+      "positive-seven-small",
+      "zero"
+    ],
+    "artifact_bytes": 3542,
+    "artifact_inventory": {
+      "target-0/corpus.json": 2788,
+      "target-0/finding-0.bin": 256,
+      "target-0/manifest.json": 498
+    },
+    "report": {
+      "command": "run",
+      "effective_limits": {
+        "allow_best_effort": true,
+        "campaign_ms": 30000,
+        "case_ms": 10000,
+        "retained_output_bytes": 65536,
+        "slice_ms": 1000,
+        "tree_memory_bytes": 1073741824
+      },
+      "elapsed_ms": 29868,
+      "environment": {
+        "environment": {
+          "executable": "/private/tmp/kiryl-product-cli/python/.venv/bin/python",
+          "hypothesis": "6.170.13",
+          "implementation": "cpython",
+          "platform": "darwin",
+          "pytest": "9.2.0",
+          "python": [
+            3,
+            14
+          ]
+        },
+        "selection": [
+          "test_branches.py"
+        ],
+        "sources": {
+          "application.py": "02c82a8717053f987bfc93899b4a39d1e6b3eaa91067986026631dde8356e200",
+          "test_branches.py": "9d386239de595012051f1886d9397b612bce07e5be8e6ee3f75870ce3b6179e2"
+        }
+      },
+      "environment_identity": {
+        "environment": {
+          "executable": "/private/tmp/kiryl-product-cli/python/.venv/bin/python",
+          "hypothesis": "6.170.13",
+          "implementation": "cpython",
+          "platform": "darwin",
+          "pytest": "9.2.0",
+          "python": [
+            3,
+            14
+          ]
+        },
+        "selection": [
+          "test_branches.py"
+        ],
+        "sources": {
+          "application.py": "02c82a8717053f987bfc93899b4a39d1e6b3eaa91067986026631dde8356e200",
+          "test_branches.py": "9d386239de595012051f1886d9397b612bce07e5be8e6ee3f75870ce3b6179e2"
+        }
+      },
+      "interrupted": false,
+      "remaining_execution_limits": {
+        "allow_best_effort": true,
+        "campaign_ms": 29853,
+        "case_ms": 10000,
+        "retained_output_bytes": 65536,
+        "slice_ms": 1000,
+        "tree_memory_bytes": 1073741824
+      },
+      "schema_version": 1,
+      "targets": [
+        {
+          "attempts": 139640,
+          "charged_ms": 26235,
+          "report": {
+            "adapter_ns": 511970046,
+            "attempts": 5491,
+            "baseline_statistics": null,
+            "branches": 13,
+            "capabilities": {
+              "backend": "portable",
+              "reason": "no native hard memory backend on this platform",
+              "tree_cleanup": false,
+              "tree_memory_hard": false
+            },
+            "corpus_entries": 114,
+            "dispatch_roundtrip_ns": 832970369,
+            "elapsed_ms": 1124,
+            "environment": {
+              "implementation": "cpython",
+              "platform": "darwin",
+              "python": [
+                3,
+                14
+              ]
+            },
+            "exploration_ms": 981,
+            "first_discovery_ms": null,
+            "interrupted": false,
+            "logs": [
+              {
+                "observed": 316,
+                "tail": [
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  32,
+                  116,
+                  101,
+                  115,
+                  116,
+                  32,
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110,
+                  32,
+                  115,
+                  116,
+                  97,
+                  114,
+                  116,
+                  115,
+                  32,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  61,
+                  10,
+                  112,
+                  108,
+                  97,
+                  116,
+                  102,
+                  111,
+                  114,
+                  109,
+                  32,
+                  100,
+                  97,
+                  114,
+                  119,
+                  105,
+                  110,
+                  32,
+                  45,
+                  45,
+                  32,
+                  80,
+                  121,
+                  116,
+                  104,
+                  111,
+                  110,
+                  32,
+                  51,
+                  46,
+                  49,
+                  52,
+                  46,
+                  57,
+                  44,
+                  32,
+                  112,
+                  121,
+                  116,
+                  101,
+                  115,
+                  116,
+                  45,
+                  57,
+                  46,
+                  50,
+                  46,
+                  48,
+                  44,
+                  32,
+                  112,
+                  108,
+                  117,
+                  103,
+                  103,
+                  121,
+                  45,
+                  49,
+                  46,
+                  55,
+                  46,
+                  48,
+                  10,
+                  114,
+                  111,
+                  111,
+                  116,
+                  100,
+                  105,
+                  114,
+                  58,
+                  32,
+                  47,
+                  112,
+                  114,
+                  105,
+                  118,
+                  97,
+                  116,
+                  101,
+                  47,
+                  118,
+                  97,
+                  114,
+                  47,
+                  102,
+                  111,
+                  108,
+                  100,
+                  101,
+                  114,
+                  115,
+                  47,
+                  102,
+                  48,
+                  47,
+                  108,
+                  100,
+                  121,
+                  49,
+                  109,
+                  48,
+                  118,
+                  110,
+                  49,
+                  102,
+                  49,
+                  103,
+                  52,
+                  119,
+                  56,
+                  55,
+                  51,
+                  114,
+                  109,
+                  51,
+                  49,
+                  51,
+                  120,
+                  114,
+                  48,
+                  48,
+                  48,
+                  48,
+                  103,
+                  110,
+                  47,
+                  84,
+                  47,
+                  107,
+                  105,
+                  114,
+                  121,
+                  108,
+                  45,
+                  98,
+                  101,
+                  110,
+                  99,
+                  104,
+                  109,
+                  97,
+                  114,
+                  107,
+                  45,
+                  56,
+                  108,
+                  112,
+                  50,
+                  107,
+                  53,
+                  111,
+                  99,
+                  47,
+                  112,
+                  114,
+                  111,
+                  100,
+                  117,
+                  99,
+                  116,
+                  10,
+                  112,
+                  108,
+                  117,
+                  103,
+                  105,
+                  110,
+                  115,
+                  58,
+                  32,
+                  104,
+                  121,
+                  112,
+                  111,
+                  116,
+                  104,
+                  101,
+                  115,
+                  105,
+                  115,
+                  45,
+                  54,
+                  46,
+                  49,
+                  55,
+                  48,
+                  46,
+                  49,
+                  51,
+                  44,
+                  32,
+                  99,
+                  111,
+                  118,
+                  45,
+                  55,
+                  46,
+                  49,
+                  46,
+                  48,
+                  10,
+                  99,
+                  111,
+                  108,
+                  108,
+                  101,
+                  99,
+                  116,
+                  101,
+                  100,
+                  32,
+                  49,
+                  32,
+                  105,
+                  116,
+                  101,
+                  109,
+                  10,
+                  10,
+                  116,
+                  101,
+                  115,
+                  116,
+                  95,
+                  98,
+                  114,
+                  97,
+                  110,
+                  99,
+                  104,
+                  101,
+                  115,
+                  46,
+                  112,
+                  121,
+                  32
+                ],
+                "truncated": false
+              }
+            ],
+            "mode": "guided",
+            "outcomes": [
+              {
+                "case_id": 1,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 2,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 3,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 4,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 5,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 6,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 7,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 8,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 9,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 10,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 11,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 12,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 13,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 14,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 15,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 16,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 17,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 18,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 19,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 20,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 21,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 22,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 23,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 24,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 25,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 26,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 27,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 28,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 29,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 30,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 31,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 32,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 33,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 34,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 35,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 36,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 37,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 38,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 39,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 40,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 41,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 42,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 43,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 44,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 45,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 46,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 47,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 48,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 49,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 50,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 51,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 52,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 53,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 54,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 55,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 56,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 57,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 58,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 59,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 60,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 61,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 62,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 63,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 64,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 65,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 66,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 67,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 68,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 69,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 70,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 71,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 72,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 73,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 74,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 75,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 76,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 77,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 78,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 79,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 80,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 81,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 82,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 83,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 84,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 85,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 86,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 87,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 88,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 89,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 90,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 91,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 92,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 93,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 94,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 95,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 96,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 97,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 98,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 99,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 100,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 101,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 102,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 103,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 104,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 105,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 106,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 107,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 108,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 109,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 110,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 111,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 112,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 113,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 114,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 115,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 116,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 117,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 118,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 119,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 120,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 121,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 122,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 123,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 124,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 125,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 126,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 127,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 128,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 129,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 130,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 131,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 132,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 133,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 134,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 135,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 136,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 137,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 138,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 139,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 140,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 141,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 142,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 143,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 144,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 145,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 146,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 147,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 148,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 149,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 150,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 151,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 152,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 153,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 154,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 155,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 156,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 157,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 158,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 159,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 160,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 161,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 162,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 163,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 164,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 165,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 166,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 167,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 168,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 169,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 170,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 171,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 172,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 173,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 174,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 175,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 176,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 177,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 178,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 179,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 180,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 181,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 182,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 183,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 184,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 185,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 186,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 187,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 188,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 189,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 190,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 191,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 192,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 193,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 194,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 195,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 196,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 197,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 198,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 199,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 200,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 201,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 202,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 203,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 204,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 205,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 206,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 207,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 208,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 209,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 210,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 211,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 212,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 213,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 214,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 215,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 216,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 217,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 218,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 219,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 220,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 221,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 222,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 223,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 224,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 225,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 226,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 227,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 228,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 229,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 230,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 231,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 232,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 233,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 234,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 235,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 236,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 237,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 238,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 239,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 240,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 241,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 242,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 243,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 244,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 245,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 246,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 247,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 248,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 249,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 250,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 251,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 252,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 253,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 254,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 255,
+                "derived": [],
+                "detail": null,
+                "kind": "reject",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 256,
+                "derived": [],
+                "detail": null,
+                "kind": "pass",
+                "original": null,
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              },
+              {
+                "case_id": 5491,
+                "derived": [],
+                "detail": null,
+                "kind": "campaign_cancelled",
+                "original": "/private/var/folders/f0/ldy1m0vn1f1g4w873rm313xr0000gn/T/kiryl-benchmark-8lp2k5oc/product/store/target-0/finding-0.bin",
+                "test_id": "test_branches.py::test_integer_branches",
+                "verification": "pending"
+              }
+            ],
+            "rejected": 1236,
+            "replay_ms": 0,
+            "seed": 25271,
+            "shrink_ms": 0,
+            "useful": 4254,
+            "version": 1
+          },
+          "status": "searched",
+          "target": "test_branches.py::test_integer_branches"
+        }
+      ],
+      "total_elapsed_ms": 30016
+    }
+  },
+  "ordinary": {
+    "command": [
+      "/private/tmp/kiryl-product-cli/python/.venv/bin/python",
+      "/var/folders/f0/ldy1m0vn1f1g4w873rm313xr0000gn/T/kiryl-benchmark-8lp2k5oc/ordinary/run_ordinary.py"
+    ],
+    "elapsed_s": 31.276941874995828,
+    "exit_code": 0,
+    "interrupt_at_deadline": true,
+    "samples": [
+      {
+        "elapsed_s": 0.002,
+        "rss_kib": 192,
+        "stored_bytes": 1922
+      },
+      {
+        "elapsed_s": 0.53,
+        "rss_kib": 46992,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 1.049,
+        "rss_kib": 61104,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 1.568,
+        "rss_kib": 72320,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 2.086,
+        "rss_kib": 75296,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 2.606,
+        "rss_kib": 78000,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 3.129,
+        "rss_kib": 80576,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 3.65,
+        "rss_kib": 85168,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 4.17,
+        "rss_kib": 87824,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 4.688,
+        "rss_kib": 90352,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 5.209,
+        "rss_kib": 92784,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 5.729,
+        "rss_kib": 96096,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 6.247,
+        "rss_kib": 99088,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 6.767,
+        "rss_kib": 101424,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 7.285,
+        "rss_kib": 106736,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 7.803,
+        "rss_kib": 109664,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 8.327,
+        "rss_kib": 108672,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 8.846,
+        "rss_kib": 110864,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 9.363,
+        "rss_kib": 113312,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 9.883,
+        "rss_kib": 116080,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 10.403,
+        "rss_kib": 118672,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 10.923,
+        "rss_kib": 120832,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 11.444,
+        "rss_kib": 123520,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 11.964,
+        "rss_kib": 125552,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 12.485,
+        "rss_kib": 128256,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 13.006,
+        "rss_kib": 130320,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 13.526,
+        "rss_kib": 132752,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 14.051,
+        "rss_kib": 134992,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 14.568,
+        "rss_kib": 137120,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 15.086,
+        "rss_kib": 144912,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 15.603,
+        "rss_kib": 146800,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 16.12,
+        "rss_kib": 150096,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 16.641,
+        "rss_kib": 152720,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 17.158,
+        "rss_kib": 155360,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 17.679,
+        "rss_kib": 157952,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 18.196,
+        "rss_kib": 160608,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 18.729,
+        "rss_kib": 162368,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 19.248,
+        "rss_kib": 165024,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 19.764,
+        "rss_kib": 167648,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 20.284,
+        "rss_kib": 169408,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 20.802,
+        "rss_kib": 172000,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 21.32,
+        "rss_kib": 174432,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 21.841,
+        "rss_kib": 176032,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 22.362,
+        "rss_kib": 179040,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 22.885,
+        "rss_kib": 181456,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 23.406,
+        "rss_kib": 184000,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 23.926,
+        "rss_kib": 185504,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 24.446,
+        "rss_kib": 188144,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 24.965,
+        "rss_kib": 192816,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 25.49,
+        "rss_kib": 195520,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 26.014,
+        "rss_kib": 196960,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 26.544,
+        "rss_kib": 199616,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 27.069,
+        "rss_kib": 202272,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 27.586,
+        "rss_kib": 204928,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 28.112,
+        "rss_kib": 207600,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 28.629,
+        "rss_kib": 207728,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 29.174,
+        "rss_kib": 210560,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 29.702,
+        "rss_kib": 213280,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 30.228,
+        "rss_kib": 214704,
+        "stored_bytes": 5843
+      },
+      {
+        "elapsed_s": 30.753,
+        "rss_kib": 216320,
+        "stored_bytes": 6037
+      }
+    ],
+    "peak_sampled_tree_rss_kib": 216320,
+    "stored_bytes": 6037,
+    "sessions": [
+      {
+        "pid": 64605,
+        "calls": 172323,
+        "paths": [
+          "negative-even-large",
+          "negative-even-small",
+          "negative-odd",
+          "positive-even",
+          "positive-odd",
+          "positive-seven-large",
+          "positive-seven-small",
+          "zero"
+        ]
+      }
+    ],
+    "observed_property_calls": 172323,
+    "observed_paths": [
+      "negative-even-large",
+      "negative-even-small",
+      "negative-odd",
+      "positive-even",
+      "positive-odd",
+      "positive-seven-large",
+      "positive-seven-small",
+      "zero"
+    ],
+    "database_bytes": 0
+  }
+}

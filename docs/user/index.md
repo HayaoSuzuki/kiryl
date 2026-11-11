@@ -51,7 +51,11 @@ passing test. Short budgets can leave selected targets unexecuted in the report.
 
 By default kiryl requires a hard memory limit for the worker process tree.
 `--memory-mib` defaults to 1024. Linux requires a writable delegated cgroup;
-Windows uses a Job Object. On macOS hard tree enforcement is unavailable.
+Windows uses a Job Object. For delegated Linux layouts, `KIRYL_CGROUP_PARENT`
+selects an existing ancestor within the process's cgroup-v2 mount. The delegated
+parent must already distribute the memory controller; run kiryl in its separate
+controller leaf so workers can occupy sibling groups. kiryl never enables shared
+ancestor controllers automatically. On macOS hard tree enforcement is unavailable.
 `--best-effort` explicitly accepts weaker enforcement; the report states actual
 capabilities. These process limits are not a security sandbox. Arbitrary abnormal
 termination is not proof of OOM, especially when Windows notifications are absent.

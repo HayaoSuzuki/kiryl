@@ -603,8 +603,11 @@ impl Executor {
         original: &str,
         mode: &str,
     ) -> Result<ExecutionReport, ExecutionError> {
-        let source: Value =
-            serde_json::from_slice(&std::fs::read(original)?).map_err(io::Error::from)?;
+        let mut store = ArtifactStore::open_matching(&config.output, &config.identity)
+            .map_err(ExecutionError::Storage)?;
+        let source = store
+            .load_original(original)
+            .map_err(ExecutionError::Storage)?;
         let mut invocation = Invocation {
             test_id: source["test_id"]
                 .as_str()
@@ -628,8 +631,7 @@ impl Executor {
         } else {
             mode
         };
-        let mut store = ArtifactStore::open_matching(&config.output, &config.identity)
-            .map_err(ExecutionError::Storage)?;
+
         let mut report = ExecutionReport {
             version: 1,
             mode: mode.into(),

@@ -88,3 +88,18 @@ Windows assignment/notification changes, or any altered startup sequence.[^resul
 [^core]: [Linux core limits and piped handlers](https://www.man7.org/linux/man-pages/man5/core.5.html).
 
 [^native]: [Native matrix revision, JUnit totals and observed gates](../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json).
+
+## Product follow-up
+
+The product executor now attaches collection as well as execution before target
+imports, and reports `oom_evidence_complete` separately from hard enforcement.
+Linux exposes positive kernel counter evidence; Windows hard Job Object limits
+remain distinct from completion notification delivery. Missing Windows notification
+is not asserted to mean no limit event. Product tests and the dedicated hard-gate
+workflow are recorded in the [hard-resource review](../work/product-cli/hard-resource-review.md).
+
+The Linux implementation can select an explicit `KIRYL_CGROUP_PARENT` only within
+the resolved process cgroup ancestry/mount. A dedicated delegated parent distributes
+memory to separate controller and worker leaves. kiryl does not enable controllers
+on shared ancestors. Native product evidence must come from actual gate execution;
+the historical experiment evidence above is not substituted for those results.

@@ -48,38 +48,56 @@ def source_hashes(root: Path | None) -> dict[str, str]:
     return sources
 
 
+class _Selection:
+    """Read final pytest-selected nodes without setting up fixtures."""
+
+    def __init__(self) -> None:
+        """Hold discovery results for one collection session."""
+        self.nodeids: list[str] = []
+        self.root: Path | None = None
+
+    def pytest_configure(self, config: pytest.Config) -> None:
+        """Record pytest root for source/configuration identity."""
+        self.root = config.rootpath.resolve()
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        """Inspect only final selection after pytest deselection hooks."""
+        import hypothesis  # noqa: PLC0415 -- runtime admitted before pytest
+        import pytest  # noqa: PLC0415
+        from hypothesis.stateful import get_state_machine_test  # noqa: PLC0415
+
+        for item in session.items:
+            if not isinstance(item, pytest.Function):
+                continue
+            wrapped = item.obj
+            factory = getattr(wrapped, "_hypothesis_state_machine_class", None)
+            if factory is not None:
+                wrapped = get_state_machine_test(factory)
+            if not hypothesis.is_hypothesis_test(wrapped):
+                continue
+            inner = cast("Any", wrapped).hypothesis.inner_test
+            if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
+                continue
+            self.nodeids.append(item.nodeid)
+
+
 def main() -> None:
     """Reserve JSON output before pytest or target imports can write to fd 1."""
     output = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8")
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    from runtime import validate_runtime  # noqa: PLC0415 -- reserve stdout first
+
+    try:
+        validate_runtime()
+    except RuntimeError as error:
+        json.dump({"version": 1, "error": str(error)}, output)
+        output.write("\n")
+        output.close()
+        raise SystemExit(2) from error
     import hypothesis  # noqa: PLC0415 -- reserve stdout before dependencies
     import pytest  # noqa: PLC0415 -- reserve stdout before dependencies
-    from hypothesis.stateful import get_state_machine_test  # noqa: PLC0415
 
-    class Selection:
-        def __init__(self) -> None:
-            self.nodeids: list[str] = []
-            self.root: Path | None = None
-
-        def pytest_configure(self, config: pytest.Config) -> None:
-            self.root = config.rootpath.resolve()
-
-        def pytest_collection_finish(self, session: pytest.Session) -> None:
-            for item in session.items:
-                if not isinstance(item, pytest.Function):
-                    continue
-                wrapped = item.obj
-                factory = getattr(wrapped, "_hypothesis_state_machine_class", None)
-                if factory is not None:
-                    wrapped = get_state_machine_test(factory)
-                if not hypothesis.is_hypothesis_test(wrapped):
-                    continue
-                inner = cast("Any", wrapped).hypothesis.inner_test
-                if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
-                    continue
-                self.nodeids.append(item.nodeid)
-
-    selection = Selection()
+    selection = _Selection()
     code = int(pytest.main([*sys.argv[1:], "--collect-only", "-s"], plugins=[selection]))
     sources = source_hashes(selection.root)
     value = {
@@ -87,6 +105,18 @@ def main() -> None:
         "nodeids": selection.nodeids,
         "root": str(selection.root),
         "sources": sources,
+        "implementation_sources": {
+            str(path.relative_to(Path(__file__).resolve().parents[2])): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in sorted(
+                [
+                    *Path(__file__).resolve().parent.glob("*.py"),
+                    *Path(__file__).resolve().parents[2].joinpath("src").rglob("*.rs"),
+                    Path(__file__).resolve().parents[2] / "Cargo.lock",
+                ]
+            )
+        },
         "selection": sys.argv[1:],
         "environment": {
             "platform": sys.platform,

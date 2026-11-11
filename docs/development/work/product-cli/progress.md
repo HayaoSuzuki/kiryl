@@ -1,3 +1,11 @@
+# Current status
+
+Product implementation now includes CLI, scheduler, Python adapter, bounded corpus,
+fresh replay/minimization and expanded native CI. See integration-review.md,
+storage-review.md, acceptance-review.md, benchmark-review.md and python/REVIEW.md
+for current evidence. Native CI and hard-resource gates are being completed;
+earlier entries below describe the initial storage increment only.
+
 # Product CLI progress
 
 Working branch: feat/product-cli. Plan: docs/development/work/product-cli/implementation-plan.md.

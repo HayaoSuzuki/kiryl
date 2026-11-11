@@ -46,7 +46,21 @@ fn unescape(field: &str) -> io::Result<PathBuf> {
     }
     Ok(std::ffi::OsString::from_vec(bytes).into())
 }
+fn validate_parent(parent: &Path, mount: &Path, current: &Path) -> io::Result<()> {
+    if !parent.is_absolute() || !parent.starts_with(mount) || !current.starts_with(parent) {
+        return Err(io::Error::other(
+            "KIRYL_CGROUP_PARENT must be an ancestor of this process within its cgroup-v2 mount",
+        ));
+    }
+    Ok(())
+}
+
 fn parents() -> io::Result<Vec<PathBuf>> {
+    // Explicit delegation changes only where owned worker groups are created.
+    // The caller provisions controllers; kiryl never changes shared ancestors.
+    let requested = std::env::var_os("KIRYL_CGROUP_PARENT")
+        .map(fs::canonicalize)
+        .transpose()?;
     let membership = fs::read_to_string("/proc/self/cgroup")?;
     let current = membership
         .lines()
@@ -74,11 +88,27 @@ fn parents() -> io::Result<Vec<PathBuf>> {
         }
         let root = unescape(fields[3])?;
         let mount = unescape(fields[4])?;
-        if let Ok(relative) = current.strip_prefix(&root) {
-            result.push(mount.join(relative));
+        let resolved = if let Ok(relative) = current.strip_prefix(&root) {
+            Some(mount.join(relative))
         } else if current == Path::new("/") {
-            result.push(mount);
+            Some(mount.clone())
+        } else {
+            None
+        };
+        if let Some(resolved) = resolved {
+            if let Some(parent) = &requested {
+                if validate_parent(parent, &mount, &resolved).is_ok() {
+                    result.push(parent.clone());
+                }
+            } else {
+                result.push(resolved);
+            }
         }
+    }
+    if requested.is_some() && result.is_empty() {
+        return Err(io::Error::other(
+            "KIRYL_CGROUP_PARENT is outside this process's cgroup-v2 ancestry",
+        ));
     }
     Ok(result)
 }
@@ -161,5 +191,21 @@ impl Group {
 impl Drop for Group {
     fn drop(&mut self) {
         let _ = fs::remove_dir(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_parent_must_contain_controller_and_stay_in_mount() {
+        let mount = Path::new("/sys/fs/cgroup");
+        let current = Path::new("/sys/fs/cgroup/delegated/controller");
+        assert!(validate_parent(Path::new("/sys/fs/cgroup/delegated"), mount, current).is_ok());
+        assert!(validate_parent(current, mount, current).is_ok());
+        assert!(validate_parent(Path::new("/sys/fs/cgroup/other"), mount, current).is_err());
+        assert!(validate_parent(Path::new("/sys/fs"), mount, current).is_err());
+        assert!(validate_parent(Path::new("relative"), mount, current).is_err());
     }
 }

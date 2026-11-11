@@ -1,0 +1,128 @@
+name: Product hard resource gates
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Delegated Linux Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.14', '3.15']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: Build pinned product
+        env:
+          PRODUCT_PYTHON: ${{ matrix.python }}
+        run: |
+          uv sync --project python --frozen --python "$PRODUCT_PYTHON"
+          rustup toolchain install
+          cargo build --locked
+      - name: Require isolated cgroup-v2 hard enforcement
+        run: |
+          product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          evidence="$PWD/product-hard-evidence"
+          mkdir -p "$evidence"
+          cat /proc/self/cgroup > "$evidence/controller-membership-before.txt"
+          cat /proc/self/mountinfo > "$evidence/mountinfo.txt"
+          # Do not enable controllers on a shared ancestor. This dedicated gate
+          # requires a writable unified mount already distributing memory.
+          cgroup_mount=$(findmnt -n -t cgroup2 -o TARGET)
+          test -n "$cgroup_mount"
+          test -f "$cgroup_mount/cgroup.subtree_control"
+          test "$(wc -l <<< "$cgroup_mount")" -eq 1
+          if ! tr ' ' '\n' < "$cgroup_mount/cgroup.subtree_control" | grep -qx memory; then
+            echo 'Shared cgroup root does not distribute memory; required hard gate failed' >&2
+            exit 1
+          fi
+          delegated="$cgroup_mount/kiryl-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+          sudo mkdir "$delegated"
+          cleanup() {
+            sudo rmdir "$delegated/controller" "$delegated"
+          }
+          trap cleanup EXIT
+          echo +memory | sudo tee "$delegated/cgroup.subtree_control" >/dev/null
+          if [[ -f "$delegated/memory.swap.max" ]]; then
+            echo 0 | sudo tee "$delegated/memory.swap.max" >/dev/null
+          fi
+          sudo mkdir "$delegated/controller"
+          sudo bash -c '
+            set -euo pipefail
+            echo $$ > "$1/controller/cgroup.procs"
+            cat /proc/self/cgroup > "$5/controller-membership-running.txt"
+            export KIRYL_CGROUP_PARENT="$1"
+            exec "$2" "$3" --binary "$4" --python "$2" --evidence "$5"
+          ' bash "$delegated" "$product_python" "$PWD/docs/development/work/product-cli/evidence/hard-resource-run.py" "$PWD/target/debug/kiryl" "$evidence"
+      - name: Retain hard-gate observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: product-hard-linux-python-${{ matrix.python }}
+          path: product-hard-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows Job Object Python ${{ matrix.python }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.14', '3.15']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: Build pinned product
+        env:
+          PRODUCT_PYTHON: ${{ matrix.python }}
+        run: |
+          uv sync --project python --frozen --python "$PRODUCT_PYTHON"
+          rustup toolchain install
+          cargo build --locked
+      - name: Require Job Object assignment and aggregate allowance
+        run: |
+          product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          "$product_python" docs/development/work/product-cli/evidence/hard-resource-run.py --binary "$PWD/target/debug/kiryl.exe" --python "$product_python" --evidence "$PWD/product-hard-evidence"
+      - name: Retain hard-gate observations and classification limits
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: product-hard-windows-python-${{ matrix.python }}
+          path: product-hard-evidence/
+          if-no-files-found: error
+          retention-days: 7
