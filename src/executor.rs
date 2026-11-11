@@ -105,11 +105,19 @@ pub struct Outcome {
 }
 #[derive(Debug, Default, Serialize)]
 pub struct LogTail {
-    pub tail: VecDeque<u8>,
-    pub observed: u64,
-    pub truncated: bool,
+    tail: VecDeque<u8>,
+    observed: u64,
+    truncated: bool,
 }
 impl LogTail {
+    /// Merge retained bytes while counting the source's full observed stream.
+    /// The resulting tail is bounded even when either source was truncated.
+    pub fn merge(&mut self, other: &Self, limit: usize) {
+        let observed = self.observed.saturating_add(other.observed);
+        self.append(&other.tail.iter().copied().collect::<Vec<_>>(), limit);
+        self.observed = observed;
+        self.truncated = observed > self.tail.len() as u64;
+    }
     pub fn append(&mut self, bytes: &[u8], limit: usize) {
         self.observed = self.observed.saturating_add(bytes.len() as u64);
         let keep = bytes.len().min(limit);
@@ -1126,14 +1134,7 @@ impl Executor {
         if report.logs.is_empty() {
             report.logs.push(log);
         } else {
-            let aggregate = &mut report.logs[0];
-            let observed = aggregate.observed.saturating_add(log.observed);
-            aggregate.append(
-                &log.tail.into_iter().collect::<Vec<_>>(),
-                config.limits.retained_output_bytes,
-            );
-            aggregate.observed = observed;
-            aggregate.truncated = observed > aggregate.tail.len() as u64;
+            report.logs[0].merge(&log, config.limits.retained_output_bytes);
         }
         if let Some(value) = &observed {
             let failure = !(["pass", "reject", "skip", "failure"].contains(&value.kind.as_str())
@@ -1398,6 +1399,38 @@ mod tests {
             prop_assert_eq!(tail.tail.into_iter().collect::<Vec<_>>(), &all[start..]);
             prop_assert_eq!(tail.observed, all.len() as u64);
         }
+    }
+    proptest! {
+        #[test]
+        fn merged_tails_match_the_unbounded_reference(chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..256), 0..32), limit in 0usize..1024) {
+            let mut aggregate = LogTail::default();
+            let mut raw = Vec::new();
+            for chunk in chunks {
+                raw.extend_from_slice(&chunk);
+                let mut source = LogTail::default();
+                source.append(&chunk, limit);
+                aggregate.merge(&source, limit);
+            }
+            let start = raw.len().saturating_sub(limit);
+            prop_assert_eq!(aggregate.tail.into_iter().collect::<Vec<_>>(), &raw[start..]);
+            prop_assert_eq!(aggregate.observed, raw.len() as u64);
+        }
+    }
+    #[test]
+    fn merging_truncated_tails_counts_full_stream_and_saturates() {
+        let mut left = LogTail::default();
+        left.append(b"abcdef", 2);
+        let mut right = LogTail::default();
+        right.append(b"ghij", 2);
+        left.merge(&right, 3);
+        assert_eq!(left.tail.iter().copied().collect::<Vec<_>>(), b"fij");
+        assert_eq!(left.observed, 10);
+        assert!(left.truncated);
+        right.observed = u64::MAX;
+        left.merge(&right, 0);
+        assert_eq!(left.observed, u64::MAX);
+        assert_eq!(left.tail.len(), 0);
+        assert!(left.truncated);
     }
     #[test]
     fn lean_generated_budget_correspondence() {

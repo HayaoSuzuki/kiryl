@@ -16,11 +16,11 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: c0d04a81edaba39d5ca6fed4b8fb5166d4dda4dee0237b3f51e7dae20f02191d
+  sha256: 37ad37b04039cc7e2322b4893406b3ef4abc7319574b069ace528d77e06e99d4
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: 719f3918db95df4aed04e7c528ecaed2e3c2772d48af75fdbf6f404e86083843
+  sha256: bbaeba04362c28725c482f396902768771f1932215e9a16d63082042399f87c2
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
@@ -174,3 +174,18 @@ records alternatives, five passes per phase and the independent scoped diagnosti
 assessment. CLI usage and version-1 storage encoding are unchanged, so user commands
 require no update. Revisit these boundaries if another consumer must decode stored
 JSON or invent its own completion precedence.[^product-report][^product-campaign]
+
+# Typed campaign progress
+
+Campaign counters and snapshots are now private typed state, serialized only at
+the report boundary. TargetProgress distinguishes cumulative measurements from the
+latest slice and preserves accumulated values on infrastructure failure. JSON
+field names no longer participate in runtime aggregation. Scheduling selection
+and public report field presence remain unchanged.[^product-campaign]
+
+LogTail owns observed-byte accounting and bounded merging for both worker sessions
+and campaign slices. Its fields are private; callers supply streams rather than
+reimplementing truncation and saturation. The [aggregation review](../work/product-cli/campaign-aggregation-refactor.md)
+records the alternatives, compatibility assertions, regression/property tests and
+scoped review results. Revisit this boundary if another consumer must read back
+serialized progress or recompute stream accounting.[^product-executor]
