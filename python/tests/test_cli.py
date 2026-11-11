@@ -657,3 +657,71 @@ def test_windows_untimed_console_break_persists_report(tmp_path: Path) -> None:
     finally:
         stop_process(process)
         free_console(kernel, allocated=allocated)
+
+
+def test_campaign_store_lock_failure_retains_completed_selection(tmp_path: Path) -> None:
+    """A root store lock fails after collection while retaining structured selection context."""
+    project(
+        tmp_path,
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_pass(n):\n    pass\n",
+    )
+    store = tmp_path / "store"
+    store.mkdir()
+    lock = store / "writer.lock"
+    lock.write_text("existing campaign owner")
+    destination = tmp_path / "campaign-locked.json"
+    result = invoke(
+        tmp_path,
+        "run",
+        "test_target.py",
+        "--best-effort",
+        "--duration",
+        "2",
+        "--store",
+        str(store),
+        "--report",
+        str(destination),
+    )
+    assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
+    report = json.loads(destination.read_text())
+    assert report["status"] == "infrastructure"
+    assert report["selection_complete"] is True
+    assert report["infrastructure_errors"]
+    assert lock.read_text() == "existing campaign owner"
+
+
+def test_minimize_rejects_raw_crash_without_changing_original(tmp_path: Path) -> None:
+    """Raw crash evidence has no semantic shrink token and remains immutable on rejection."""
+    project(
+        tmp_path,
+        "import os\nfrom hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_abort(n):\n    os.abort()\n",
+    )
+    code, campaign = run(tmp_path, "raw-minimize")
+    assert code == 1
+    crash = next(
+        filter(
+            lambda item: item["kind"] == "native_crash",
+            campaign["targets"][0]["report"]["outcomes"],
+        )
+    )
+    original = Path(crash["original"])
+    before = original.read_bytes()
+    destination = tmp_path / "raw-minimize-error.json"
+    result = invoke(
+        tmp_path,
+        "minimize",
+        str(original),
+        "--best-effort",
+        "--duration",
+        "2",
+        "--report",
+        str(destination),
+    )
+    assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
+    report = json.loads(destination.read_text())
+    assert report["status"] == "infrastructure"
+    assert report["selection_complete"] is True
+    assert "semantic minimization unavailable" in "\n".join(report["infrastructure_errors"])
+    assert original.read_bytes() == before
