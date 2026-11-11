@@ -237,35 +237,19 @@ fn main() {
     let mut context = json!({"schema_version":1,"targets":[],"selection_complete":false});
     let code = run(&mut context).unwrap_or_else(|error| {
         eprintln!("kiryl: {error}");
-        let kind = error.downcast_ref::<io::Error>().map(io::Error::kind);
-        let code = match kind {
-            Some(io::ErrorKind::Interrupted) => 130,
-            Some(io::ErrorKind::TimedOut) => 0,
-            _ => 2,
-        };
-        context["status"] = json!(match code {
-            130 => "interrupted",
-            0 => "campaign_cancelled",
-            _ => "infrastructure",
-        });
-        context["interrupted"] = json!(code == 130);
-        context["elapsed_ms"] = json!(started.elapsed().as_millis());
-        context["infrastructure_errors"] = if code == 2 {
-            json!([error.to_string().chars().take(16384).collect::<String>()])
-        } else {
-            json!([])
-        };
+        let completion =
+            kiryl::report::record_error(&mut context, error.as_ref(), started.elapsed());
         let bytes = serde_json::to_vec_pretty(&context).unwrap_or_default();
         if let Some([_, report_path]) = args.windows(2).find(|pair| pair[0] == "--report") {
             if let Err(error) = publish(Path::new(report_path), &bytes) {
                 eprintln!("kiryl: error report persistence failed: {error}");
                 println!("{}", String::from_utf8_lossy(&bytes));
-                return 2;
+                return kiryl::report::Completion::Infrastructure.exit_code();
             }
         } else {
             println!("{}", String::from_utf8_lossy(&bytes));
         }
-        code
+        completion.exit_code()
     });
     std::process::exit(code);
 }

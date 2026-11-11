@@ -147,3 +147,31 @@ fn report_completion(report: &Value) -> Completion {
     }
     result
 }
+
+/// Record an early command failure while retaining the context collected so far.
+/// Budget expiry before an active case is clean cancellation; no finding is invented.
+/// Diagnostics are bounded, and interruption takes the same priority as normal results.
+pub fn record_error(
+    context: &mut Value,
+    error: &(dyn std::error::Error + 'static),
+    elapsed: std::time::Duration,
+) -> Completion {
+    let completion = match error.downcast_ref::<io::Error>().map(io::Error::kind) {
+        Some(io::ErrorKind::Interrupted) => Completion::Interrupted,
+        Some(io::ErrorKind::TimedOut) => Completion::Clean,
+        _ => Completion::Infrastructure,
+    };
+    context["status"] = json!(match completion {
+        Completion::Interrupted => "interrupted",
+        Completion::Clean => "campaign_cancelled",
+        Completion::Infrastructure | Completion::Finding => "infrastructure",
+    });
+    context["interrupted"] = json!(completion == Completion::Interrupted);
+    context["elapsed_ms"] = json!(elapsed.as_millis());
+    context["infrastructure_errors"] = if completion == Completion::Infrastructure {
+        json!([error.to_string().chars().take(16384).collect::<String>()])
+    } else {
+        json!([])
+    };
+    completion
+}

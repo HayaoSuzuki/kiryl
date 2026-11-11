@@ -49,3 +49,23 @@ fn cancellation_preserves_candidates_and_interruption_dominates_errors() {
     report["interrupted"] = json!(true);
     assert_eq!(kiryl::report::exit_code(&report), 130);
 }
+
+#[test]
+fn command_errors_share_completion_and_preserve_available_context() {
+    use std::{io, time::Duration};
+    for (kind, expected) in [
+        (io::ErrorKind::Interrupted, 130),
+        (io::ErrorKind::TimedOut, 0),
+        (io::ErrorKind::Other, 2),
+    ] {
+        let mut report = json!({"command":"run","selection":["test_x.py"]});
+        let completion = kiryl::report::record_error(
+            &mut report,
+            &io::Error::new(kind, "reason"),
+            Duration::from_millis(7),
+        );
+        assert_eq!(completion.exit_code(), expected);
+        assert_eq!(report["selection"][0], "test_x.py");
+        assert_eq!(report["elapsed_ms"], 7);
+    }
+}

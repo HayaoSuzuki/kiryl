@@ -31,7 +31,7 @@ sources:
 - id: product-report
   resource: ../../../src/report.rs
   working_tree: modified
-  sha256: 326be6bfe821713368cb2d3b9d4c0ae45e7ad6de2a9b55199fd34b55f4338c09
+  sha256: 14643e5d55f489fb0252c186cbd1e66f3a8d500b3a345643c81c1c1b5db6672e
 ---
 # Selected direction
 

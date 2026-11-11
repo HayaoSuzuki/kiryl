@@ -73,3 +73,9 @@ these targeted storage/status boundaries 10/10: all eight diagnostics pass, no
 failed rows. This is a scoped design assessment, not a claim that the entire
 repository is perfect. The reviewer checked code and regression evidence; the
 coordinator runs the full suites and native CI.
+
+Early command errors also go through report::record_error and Completion; the
+CLI no longer repeats IO-error-to-exit encoding. A regression first failed with
+the absent API, then checked interruption, pre-case budget expiry, infrastructure,
+retained context and elapsed time. This closes the early-error path as well as
+normal standalone/campaign completion without altering user-visible semantics.
