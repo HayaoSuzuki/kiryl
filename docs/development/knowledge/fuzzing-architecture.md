@@ -79,3 +79,15 @@ the product scope to make a candidate pass.[^proposal]
 [^proposal]: [Coverage-guided Python fuzzing design and recorded interview decisions](../work/coverage-guided-python-fuzzing/design.md).
 [^plan]: [Feasibility implementation plan](../work/coverage-guided-python-fuzzing/feasibility-plan.md).
 [^crate]: [Scaffold library](../../../src/lib.rs), inspected at `5c4eccb43708bc115c83bc2f468c22758d73b5e1`.
+
+# Product implementation in progress
+
+The [product implementation plan](../work/product-cli/implementation-plan.md)
+specializes Issue #5 into storage, executor/adapter, campaign/CLI, replay and
+acceptance work. The current Rust crate adds an initial exclusive-writer byte
+store; it does not yet implement versioned artifacts, environment identity,
+corpus persistence or a product CLI. Its lock is conservative: process death
+can leave a lock requiring manual inspection, and no automatic stale-lock
+recovery is promised. See the [progress record](../work/product-cli/progress.md)
+for partial checks and unresolved review findings. This does not establish the
+product acceptance matrix or adopt the experimental implementation wholesale.

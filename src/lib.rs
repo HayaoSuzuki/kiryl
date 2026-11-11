@@ -1,4 +1,6 @@
 //! Fuzz testing tools for Python.
 //!
-//! This crate currently provides the Rust development scaffold only.
-//! Fuzzing engines and Python integration have not been implemented.
+//! Initial artifact storage primitives are available.
+//! Product campaigns, CLI and Python integration are not implemented yet.
+
+pub mod artifacts;
