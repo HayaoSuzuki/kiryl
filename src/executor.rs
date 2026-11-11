@@ -111,9 +111,13 @@ pub struct LogTail {
 }
 impl LogTail {
     /// Merge retained bytes while counting the source's full observed stream.
-    /// The resulting tail is bounded even when either source was truncated.
+    /// A truncated source breaks continuity: discard older retained bytes rather
+    /// than splice across missing history. The result is a known stream suffix.
     pub fn merge(&mut self, other: &Self, limit: usize) {
         let observed = self.observed.saturating_add(other.observed);
+        if other.truncated {
+            self.tail.clear();
+        }
         self.append(&other.tail.iter().copied().collect::<Vec<_>>(), limit);
         self.observed = observed;
         self.truncated = observed > self.tail.len() as u64;
@@ -1423,7 +1427,7 @@ mod tests {
         let mut right = LogTail::default();
         right.append(b"ghij", 2);
         left.merge(&right, 3);
-        assert_eq!(left.tail.iter().copied().collect::<Vec<_>>(), b"fij");
+        assert_eq!(left.tail.iter().copied().collect::<Vec<_>>(), b"ij");
         assert_eq!(left.observed, 10);
         assert!(left.truncated);
         right.observed = u64::MAX;

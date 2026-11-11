@@ -70,3 +70,13 @@ The follow-up review confirmed both fixes and scored this campaign aggregation
 scope 10/10, all eight diagnostics passing, with no remaining failed rows. This
 is not a repository-wide score or a claim that no further improvement is possible.
 The reviewer inspected code; execution results are verified by the coordinator.
+
+## Mixed-capacity merge boundary
+
+A final review pass considered differently sized retained histories. Concatenating
+left `ef` (from `abcdef`) and right `ij` (from `ghij`) under a new capacity of three
+must not produce `fij`, which splices across missing history. The regression first
+failed with `fij`; merging now discards older retained bytes when the incoming
+source was truncated, yielding the known contiguous suffix `ij` while keeping
+observed=10. Same-capacity production behavior is unchanged. Independent review
+confirmed this contract and retained the scoped eight-diagnostic pass assessment.
