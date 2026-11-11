@@ -17,8 +17,10 @@ The adapter supports GIL-enabled CPython 3.14/3.15 with Hypothesis 6.170.13 and
 pytest 9.2.0. Version checks reject other runtimes before test dispatch. Install
 your project's dependencies in the selected interpreter as well. The native
 product workflow tests the OS/interpreter matrix; a configured job alone is not
-proof of support. Local acceptance evidence currently covers macOS with Python
-3.14. Hard tree-memory acceptance is still pending on native Linux/Windows.
+proof of support. Recorded native hard-resource probes passed on Linux and Windows with both
+specified Python versions, including aggregate descendants and cleanup. The
+product CI matrix records actual CLI scenario results; consult the PR checks for
+the tested revision rather than treating this as unrestricted platform support.
 
 ## Explore tests
 

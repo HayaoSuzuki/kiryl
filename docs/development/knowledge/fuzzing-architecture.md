@@ -15,23 +15,19 @@ sources:
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
 - id: product-campaign
   resource: ../../../src/campaign.rs
-  working_tree: modified
-  sha256: 0d06b2df16e635c4dc2dbc0e01ad2567d8c2a00ecd71ad29059813ee3c20b4ed
+  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
 - id: product-executor
   resource: ../../../src/executor.rs
-  working_tree: modified
-  sha256: cbf6151c8dae3938c1ced9d39c21017db44afc9f17240ae71a2549dac671e08c
+  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
 - id: product-store
   resource: ../../../src/artifacts.rs
-  working_tree: modified
-  sha256: c47f8715519776ada1dcdcbc0ac521d2e23e1aec4b38ba75d712d4a27414581a
+  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
   revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
 - id: product-report
   resource: ../../../src/report.rs
-  working_tree: untracked
-  sha256: d6c45d453a1d3aafd727bdda7bec5be304a448481c7af56caa7ab54c26203b6f
+  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
 ---
 # Selected direction
 

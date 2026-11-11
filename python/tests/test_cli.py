@@ -444,8 +444,12 @@ def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
         if handle:
             kernel.CloseHandle(handle)
         if pid_file.exists():
-            with suppress(ProcessLookupError, PermissionError):
+            try:
                 os.kill(int(pid_file.read_text()), signal.SIGTERM)
+            except OSError as error:
+                # A successfully terminated job may already have reaped its PID.
+                if error.winerror not in (87, 1168):
+                    raise
 
 
 def test_fixture_setup_error_retains_diagnostic_detail(tmp_path: Path) -> None:

@@ -258,3 +258,13 @@ normal native execution and all behavioral assertions. No typing rules were
 disabled. ty check passed for --python-platform win32, linux and darwin with the
 product interpreter; Ruff and formatting checks passed. This validates platform
 symbol resolution, not native execution of other-platform tests.
+
+## Windows cleanup already-exited PID correction
+
+Both native Windows jobs reached and passed the descendant termination assertion
+and console interruption test. The Job test's final defensive os.kill then
+raised generic OSError WinError 87 because the PID had already exited. Cleanup
+now accepts only absent-PID WinErrors 87 and 1168; all other OSErrors propagate.
+The native status assertion remains unchanged. Ruff and format checks plus ty
+for win32, linux and darwin passed. Native rerun of this final cleanup correction
+remains a CI gate; prior failure was test cleanup, not the observed Job behavior.

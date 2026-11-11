@@ -103,3 +103,16 @@ them afterward. A live original descendant still fails the gate, while PID reuse
 cannot impersonate it. This is a CI evidence mechanism, not a product API or
 change to Windows cleanup implementation. The next native run must determine
 whether the exact descendants terminate and whether aggregate denial occurs.
+
+## Recorded native gate success
+
+All four required native hard jobs passed at revision `07b94e6`: Linux and
+Windows × CPython 3.14/3.15. The [compact observation summary](evidence/native-hard-summary.json)
+records actual capabilities and terminal outcomes from
+[the native run](https://github.com/HayaoSuzuki/kiryl/actions/runs/43010524385).
+Both Linux aggregate probes observed kernel OOM evidence; both Windows probes
+observed positive notifications while still reporting incomplete OOM evidence
+coverage. The 768 MiB control admitted the two touched descendants; the 256 MiB
+allowance enforced their aggregate use. Observer-owned handles proved Windows
+cleanup without relying on numeric PID reuse. Later revisions rerun these gates;
+this record is evidence about the named revision, not future executions.
