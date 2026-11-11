@@ -12,7 +12,6 @@ pub struct Search {
     corpus: Vec<Vec<u8>>,
     features: HashSet<String>,
     feature_bytes: usize,
-    feedback: bool,
     first: bool,
     pub feature_limit_reached: bool,
 }
@@ -24,16 +23,8 @@ impl Search {
             corpus: vec![vec![0; 512]],
             features: HashSet::new(),
             feature_bytes: 0,
-            feedback: true,
             first: true,
             feature_limit_reached: false,
-        }
-    }
-    #[must_use]
-    pub fn without_feedback(seed: u64) -> Self {
-        Self {
-            feedback: false,
-            ..Self::new(seed)
         }
     }
     pub fn restore(&mut self, corpus: Vec<Vec<u8>>) {
@@ -110,7 +101,7 @@ impl Search {
             self.feature_bytes += feature.len();
             novel |= self.features.insert(feature.clone());
         }
-        if self.feedback && novel {
+        if novel {
             let candidate = if observation.kind == "pass" {
                 observation.canonical.as_deref().unwrap_or(input)
             } else {
@@ -133,5 +124,33 @@ impl Search {
     #[must_use]
     pub fn feature_count(&self) -> usize {
         self.features.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn novel_pass_uses_canonical_bytes_and_failure_keeps_original_bytes() {
+        let mut search = Search::new(7);
+        assert_eq!(search.next_case(), vec![0; 512]);
+        let mut observation = Observation {
+            kind: "pass".into(),
+            canonical: Some(vec![1, 2]),
+            features: vec!["branch-a".into()],
+            ..Observation::default()
+        };
+        search.observe(&[9], &observation);
+        assert_eq!(search.corpus(), [vec![0; 512], vec![1, 2]]);
+        observation.kind = "failure".into();
+        observation.features = vec!["branch-b".into()];
+        search.observe(&[3, 4], &observation);
+        assert_eq!(search.corpus(), [vec![0; 512], vec![1, 2], vec![3, 4]]);
+        observation.kind = "reject".into();
+        observation.features = vec!["ignored".into()];
+        search.observe(&[5], &observation);
+        assert_eq!(search.feature_count(), 2);
+        assert_eq!(search.corpus_len(), 3);
     }
 }

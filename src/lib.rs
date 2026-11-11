@@ -6,6 +6,7 @@
 pub mod artifacts;
 
 pub mod campaign;
+pub mod command;
 pub mod executor;
 pub mod report;
 mod resource;

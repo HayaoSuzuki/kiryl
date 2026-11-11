@@ -5,7 +5,7 @@ use crate::{artifacts::ArtifactStore, resource, search::Search, wire};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     io::{self, Read},
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -28,11 +28,10 @@ pub enum ExecutionError {
     Storage(io::Error),
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Invocation {
-    pub test_id: String,
-    pub inputs: Vec<Vec<u8>>,
+#[derive(Debug)]
+struct Invocation {
+    test_id: String,
+    raw_input: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,28 +56,29 @@ impl Default for Limits {
         }
     }
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExecutorConfig {
+/// Interpreter, budgets and artifact identity for a product execution.
+#[derive(Clone, Debug)]
+pub(crate) struct ExecutionSettings {
     pub python: PathBuf,
     pub pytest_args: Vec<String>,
-    pub invocations: Vec<Invocation>,
-    #[serde(default)]
     pub limits: Limits,
-    #[serde(default)]
     pub seed: u64,
-    #[serde(default)]
-    pub search: bool,
-    #[serde(default = "enabled")]
-    pub feedback: bool,
-    #[serde(default)]
-    pub baseline: bool,
     pub output: PathBuf,
-    #[serde(default)]
     pub identity: Value,
 }
-fn enabled() -> bool {
-    true
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Reproduction {
+    Replay,
+    Minimize,
+}
+impl Reproduction {
+    fn wire_mode(self) -> &'static str {
+        match self {
+            Self::Replay => "replay",
+            Self::Minimize => "minimize",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -183,7 +183,7 @@ struct Worker {
     cleanup_error: Option<String>,
 }
 impl Worker {
-    fn launch(config: &ExecutorConfig) -> io::Result<Self> {
+    fn launch(config: &ExecutionSettings) -> io::Result<Self> {
         let mut command = Command::new(&config.python);
         command
             .args([
@@ -317,12 +317,11 @@ impl Drop for Worker {
 struct RunResult {
     observation: Option<Observation>,
     original: Option<String>,
-    consumed: usize,
     retained_input: Option<Vec<u8>>,
     derived: Vec<Value>,
 }
 
-pub struct Executor {
+pub(crate) struct Executor {
     interrupted: Arc<AtomicBool>,
 }
 impl Executor {
@@ -336,9 +335,12 @@ impl Executor {
     /// # Errors
     /// Returns invalid configuration, transport setup, or durable write failures.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)] // owned public configuration is the planned boundary
-    pub fn run(&self, config: ExecutorConfig) -> Result<ExecutionReport, ExecutionError> {
-        if config.search && (config.invocations.len() != 1 || config.baseline)
-            || config.limits.tree_memory_bytes == 0
+    pub fn explore(
+        &self,
+        target: &str,
+        config: ExecutionSettings,
+    ) -> Result<ExecutionReport, ExecutionError> {
+        if config.limits.tree_memory_bytes == 0
             || config.limits.case_ms == 0
             || config.limits.slice_ms == 0
             || config.limits.retained_output_bytes > 16 * 1024 * 1024
@@ -352,16 +354,7 @@ impl Executor {
         let start = Instant::now();
         let mut report = ExecutionReport {
             version: 1,
-            mode: if config.baseline {
-                "hypothesis"
-            } else if config.search && config.feedback {
-                "guided"
-            } else if config.search {
-                "unguided"
-            } else {
-                "fixed"
-            }
-            .into(),
+            mode: "guided".into(),
             seed: config.seed,
             capabilities: serde_json::to_value(resource::detect()).map_err(io::Error::from)?,
             ..ExecutionReport::default()
@@ -378,215 +371,174 @@ impl Executor {
             });
             return Ok(report);
         }
-        let mut stopped = HashSet::new();
-        for invocation in &config.invocations {
-            if stopped.contains(&invocation.test_id) {
-                continue;
-            }
-            let mut search = if config.baseline {
-                Some(Search::without_feedback(config.seed))
-            } else if config.search {
-                Some(if config.feedback {
-                    Search::new(config.seed)
-                } else {
-                    Search::without_feedback(config.seed)
-                })
-            } else {
-                None
-            };
-            if let Some(engine) = &mut search {
-                engine.restore(store.load_corpus().map_err(ExecutionError::Storage)?);
-            }
-            let mut offset = 0;
-            while config.search || config.baseline || offset < invocation.inputs.len() {
-                let result = self.session(
+        let invocation = &Invocation {
+            test_id: target.into(),
+            raw_input: None,
+        };
+        let mut engine = Search::new(config.seed);
+        engine.restore(store.load_corpus().map_err(ExecutionError::Storage)?);
+        let mut search = Some(engine);
+        let result = self.session(
+            &config,
+            invocation,
+            "run",
+            None,
+            start,
+            &mut store,
+            &mut report,
+            &mut search,
+        )?;
+        if let Some(observed) = result.observation {
+            let index = report
+                .outcomes
+                .iter()
+                .rposition(|o| o.original == result.original && o.kind == observed.kind)
+                .unwrap_or_else(|| report.outcomes.len().saturating_sub(1));
+            if observed.kind == "failure"
+                && let (Some(token), Some(original)) = (&observed.replay_token, &result.original)
+                && !self.cancelled(&config, start)
+            {
+                let replay_start = Instant::now();
+                let verified = self.session(
                     &config,
                     invocation,
-                    offset,
-                    if config.baseline { "baseline" } else { "run" },
-                    None,
+                    "replay",
+                    Some(token),
                     start,
                     &mut store,
                     &mut report,
-                    &mut search,
+                    &mut None,
                 )?;
-                offset += result.consumed;
-                if let Some(observed) = result.observation {
-                    stopped.insert(invocation.test_id.clone());
-                    let index = report
-                        .outcomes
-                        .iter()
-                        .rposition(|o| o.original == result.original && o.kind == observed.kind)
-                        .unwrap_or_else(|| report.outcomes.len().saturating_sub(1));
-                    if observed.kind == "failure"
-                        && let (Some(token), Some(original)) =
-                            (&observed.replay_token, &result.original)
-                        && !self.cancelled(&config, start)
-                    {
-                        let replay_start = Instant::now();
-                        let verified = self.session(
-                            &config,
-                            invocation,
-                            0,
-                            "replay",
-                            Some(token),
-                            start,
-                            &mut store,
-                            &mut report,
-                            &mut None,
-                        )?;
-                        report.replay_ms += replay_start.elapsed().as_millis();
-                        let verification = verified
-                            .observation
-                            .as_ref()
-                            .map_or("pending", |o| {
-                                if o.kind == "failure" && o.fingerprint == observed.fingerprint {
-                                    "confirmed"
-                                } else if ["campaign_cancelled", "interrupted", "infrastructure"]
-                                    .contains(&o.kind.as_str())
-                                {
-                                    "pending"
-                                } else {
-                                    "unstable"
-                                }
-                            })
-                            .to_owned();
-                        report.outcomes[index]
-                            .verification
-                            .clone_from(&verification);
-                        if let Some(value) = verified.observation {
-                            let path = store
-                                .derived(original, &json!({"mode": "replay", "observation": value}))
-                                .map_err(ExecutionError::Storage)?;
-                            report.outcomes[index].derived.push(path);
+                report.replay_ms += replay_start.elapsed().as_millis();
+                let verification = verified
+                    .observation
+                    .as_ref()
+                    .map_or("pending", |o| {
+                        if o.kind == "failure" && o.fingerprint == observed.fingerprint {
+                            "confirmed"
+                        } else if ["campaign_cancelled", "interrupted", "infrastructure"]
+                            .contains(&o.kind.as_str())
+                        {
+                            "pending"
+                        } else {
+                            "unstable"
                         }
-                        if verification == "confirmed" && !self.cancelled(&config, start) {
-                            let shrink_start = Instant::now();
-                            let shrunk = self.session(
+                    })
+                    .to_owned();
+                report.outcomes[index]
+                    .verification
+                    .clone_from(&verification);
+                if let Some(value) = verified.observation {
+                    let path = store
+                        .derived(original, &json!({"mode": "replay", "observation": value}))
+                        .map_err(ExecutionError::Storage)?;
+                    report.outcomes[index].derived.push(path);
+                }
+                if verification == "confirmed" && !self.cancelled(&config, start) {
+                    let shrink_start = Instant::now();
+                    let shrunk = self.session(
+                        &config,
+                        invocation,
+                        "minimize",
+                        Some(token),
+                        start,
+                        &mut store,
+                        &mut report,
+                        &mut None,
+                    )?;
+                    report.shrink_ms += shrink_start.elapsed().as_millis();
+                    for mut evidence in shrunk.derived {
+                        let pending = store
+                            .derived(original, &evidence)
+                            .map_err(ExecutionError::Storage)?;
+                        report.outcomes[index].derived.push(pending);
+                        if evidence.get("token").is_some() && !self.cancelled(&config, start) {
+                            let candidate: Vec<u8> =
+                                serde_json::from_value(evidence["token"].clone())
+                                    .map_err(io::Error::from)?;
+                            let checked = self.session(
                                 &config,
                                 invocation,
-                                0,
-                                "minimize",
-                                Some(token),
+                                "replay",
+                                Some(&candidate),
                                 start,
                                 &mut store,
                                 &mut report,
                                 &mut None,
                             )?;
-                            report.shrink_ms += shrink_start.elapsed().as_millis();
-                            for mut evidence in shrunk.derived {
-                                let pending = store
-                                    .derived(original, &evidence)
-                                    .map_err(ExecutionError::Storage)?;
-                                report.outcomes[index].derived.push(pending);
-                                if evidence.get("token").is_some()
-                                    && !self.cancelled(&config, start)
-                                {
-                                    let candidate: Vec<u8> =
-                                        serde_json::from_value(evidence["token"].clone())
-                                            .map_err(io::Error::from)?;
-                                    let checked = self.session(
-                                        &config,
-                                        invocation,
-                                        0,
-                                        "replay",
-                                        Some(&candidate),
-                                        start,
-                                        &mut store,
-                                        &mut report,
-                                        &mut None,
-                                    )?;
-                                    evidence["verification"] = json!(if checked
-                                        .observation
-                                        .as_ref()
-                                        .is_some_and(|o| o.kind == "failure"
-                                            && o.fingerprint == observed.fingerprint)
-                                    {
-                                        "confirmed"
-                                    } else if checked.observation.as_ref().is_none_or(|o| [
-                                        "campaign_cancelled",
-                                        "interrupted",
-                                        "infrastructure"
-                                    ]
-                                    .contains(&o.kind.as_str()))
-                                    {
-                                        "pending"
-                                    } else {
-                                        "unstable"
-                                    });
-                                }
-                                report.outcomes[index].derived.push(
-                                    store
-                                        .derived(original, &evidence)
-                                        .map_err(ExecutionError::Storage)?,
-                                );
-                            }
+                            evidence["verification"] = json!(if checked
+                                .observation
+                                .as_ref()
+                                .is_some_and(|o| o.kind == "failure"
+                                    && o.fingerprint == observed.fingerprint)
+                            {
+                                "confirmed"
+                            } else if checked.observation.as_ref().is_none_or(|o| [
+                                "campaign_cancelled",
+                                "interrupted",
+                                "infrastructure"
+                            ]
+                            .contains(&o.kind.as_str()))
+                            {
+                                "pending"
+                            } else {
+                                "unstable"
+                            });
                         }
-                    }
-                    if ["native_crash", "case_timeout"].contains(&observed.kind.as_str())
-                        && let Some(original) = &result.original
-                        && !self.cancelled(&config, start)
-                    {
-                        let replay_invocation = Invocation {
-                            test_id: invocation.test_id.clone(),
-                            inputs: result.retained_input.clone().into_iter().collect(),
-                        };
-                        let verification = self.session(
-                            &config,
-                            &replay_invocation,
-                            0,
-                            "raw_replay",
-                            None,
-                            start,
-                            &mut store,
-                            &mut report,
-                            &mut None,
-                        )?;
-                        let status = if verification.observation.as_ref().is_none_or(|v| {
-                            ["campaign_cancelled", "interrupted", "infrastructure"]
-                                .contains(&v.kind.as_str())
-                        }) {
-                            "pending"
-                        } else if verification.observation.as_ref().is_some_and(|v| {
-                            v.kind == observed.kind
-                                && (v.kind != "native_crash" || v.rendered == observed.rendered)
-                        }) {
-                            "confirmed"
-                        } else {
-                            "unstable"
-                        };
-                        report.outcomes[index].verification = status.into();
-                        let evidence = json!({"mode": "raw_replay", "input": result.retained_input, "verification": status, "observation": verification.observation});
                         report.outcomes[index].derived.push(
                             store
                                 .derived(original, &evidence)
                                 .map_err(ExecutionError::Storage)?,
                         );
                     }
-                    break;
-                }
-                if config.search
-                    || config.baseline
-                    || self.cancelled(&config, start)
-                    || result.consumed == 0
-                {
-                    break;
                 }
             }
-            if let Some(search) = search {
-                store
-                    .save_corpus(search.corpus())
-                    .map_err(ExecutionError::Storage)?;
-                report.branches = search.feature_count();
-                report.corpus_entries = if config.baseline {
-                    0
-                } else {
-                    search.corpus_len()
+            if ["native_crash", "case_timeout"].contains(&observed.kind.as_str())
+                && let Some(original) = &result.original
+                && !self.cancelled(&config, start)
+            {
+                let replay_invocation = Invocation {
+                    test_id: invocation.test_id.clone(),
+                    raw_input: result.retained_input.clone(),
                 };
+                let verification = self.session(
+                    &config,
+                    &replay_invocation,
+                    "raw_replay",
+                    None,
+                    start,
+                    &mut store,
+                    &mut report,
+                    &mut None,
+                )?;
+                let status = if verification.observation.as_ref().is_none_or(|v| {
+                    ["campaign_cancelled", "interrupted", "infrastructure"]
+                        .contains(&v.kind.as_str())
+                }) {
+                    "pending"
+                } else if verification.observation.as_ref().is_some_and(|v| {
+                    v.kind == observed.kind
+                        && (v.kind != "native_crash" || v.rendered == observed.rendered)
+                }) {
+                    "confirmed"
+                } else {
+                    "unstable"
+                };
+                report.outcomes[index].verification = status.into();
+                let evidence = json!({"mode": "raw_replay", "input": result.retained_input, "verification": status, "observation": verification.observation});
+                report.outcomes[index].derived.push(
+                    store
+                        .derived(original, &evidence)
+                        .map_err(ExecutionError::Storage)?,
+                );
             }
-            if self.cancelled(&config, start) {
-                break;
-            }
+        }
+        if let Some(search) = search {
+            store
+                .save_corpus(search.corpus())
+                .map_err(ExecutionError::Storage)?;
+            report.branches = search.feature_count();
+            report.corpus_entries = search.corpus_len();
         }
         report.interrupted = self.interrupted.load(Ordering::Relaxed);
         report.elapsed_ms = start.elapsed().as_millis();
@@ -598,10 +550,11 @@ impl Executor {
     #[allow(clippy::too_many_lines)] // Replay/minimize share one original-preserving transaction.
     pub fn operation(
         &self,
-        config: &ExecutorConfig,
+        config: &ExecutionSettings,
         original: &str,
-        mode: &str,
+        mode: Reproduction,
     ) -> Result<ExecutionReport, ExecutionError> {
+        let mode = mode.wire_mode();
         let mut store = ArtifactStore::open_matching(&config.output, &config.identity)
             .map_err(ExecutionError::Storage)?;
         let source = store
@@ -609,7 +562,7 @@ impl Executor {
             .map_err(ExecutionError::Storage)?;
         let mut invocation = Invocation {
             test_id: source.test_id.clone(),
-            inputs: vec![],
+            raw_input: None,
         };
         let token = source.observation.replay_token.clone();
         let operation = if token.is_none() {
@@ -619,7 +572,7 @@ impl Executor {
                 )
                 .into());
             }
-            invocation.inputs = vec![source.input.clone()];
+            invocation.raw_input = Some(source.input.clone());
             "raw_replay"
         } else {
             mode
@@ -634,7 +587,6 @@ impl Executor {
         let result = self.session(
             config,
             &invocation,
-            0,
             operation,
             token.as_ref(),
             start,
@@ -690,7 +642,6 @@ impl Executor {
                 let checked = self.session(
                     config,
                     &invocation,
-                    0,
                     "replay",
                     Some(&candidate),
                     start,
@@ -736,7 +687,7 @@ impl Executor {
         report.elapsed_ms = start.elapsed().as_millis();
         Ok(report)
     }
-    fn cancelled(&self, config: &ExecutorConfig, start: Instant) -> bool {
+    fn cancelled(&self, config: &ExecutionSettings, start: Instant) -> bool {
         self.interrupted.load(Ordering::Relaxed)
             || config
                 .limits
@@ -746,9 +697,8 @@ impl Executor {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one transport state machine, reviewed as a unit
     fn session(
         &self,
-        config: &ExecutorConfig,
+        config: &ExecutionSettings,
         invocation: &Invocation,
-        offset: usize,
         mode: &str,
         token: Option<&Vec<u8>>,
         campaign_start: Instant,
@@ -772,7 +722,6 @@ impl Executor {
                 return Ok(RunResult {
                     observation: Some(observation),
                     original: None,
-                    consumed: 0,
                     retained_input: None,
                     derived: vec![],
                 });
@@ -780,7 +729,7 @@ impl Executor {
         };
         report.capabilities =
             serde_json::to_value(worker.resource.capabilities()).map_err(io::Error::from)?;
-        let mut consumed = 0;
+        let mut raw_dispatched = false;
         let mut active: Option<(u64, Vec<u8>, Instant)> = None;
         let mut observed = None;
         let mut original = None;
@@ -873,14 +822,12 @@ impl Executor {
                             if slice_start.get_or_insert_with(Instant::now).elapsed()
                                 >= Duration::from_millis(config.limits.slice_ms)
                                 || observed.is_some()
-                                || (search.is_none()
-                                    && offset + consumed >= invocation.inputs.len())
-                                || (mode == "raw_replay" && consumed >= 1)
+                                || (mode == "raw_replay" && raw_dispatched)
                             {
                                 worker.enqueue(json!({"kind": "end"}));
                             } else {
                                 let input = search.as_mut().map_or_else(
-                                    || invocation.inputs[offset + consumed].clone(),
+                                    || invocation.raw_input.clone().unwrap_or_default(),
                                     Search::next_case,
                                 );
                                 if mode == "run" {
@@ -888,7 +835,7 @@ impl Executor {
                                 }
                                 let id = if mode == "run" { report.attempts } else { 0 };
                                 active = Some((id, input.clone(), Instant::now()));
-                                consumed += 1;
+                                raw_dispatched = true;
                                 worker.enqueue(
                                     json!({"kind": "case", "case_id": id, "input": input}),
                                 );
@@ -901,43 +848,6 @@ impl Executor {
                             }
                             active = Some((0, token.cloned().unwrap_or_default(), Instant::now()));
                             worker.enqueue(json!({"kind": "ack"}));
-                        }
-                        "baseline_case" if ready && mode == "baseline" && active.is_none() => {
-                            if message["test_id"].as_str() != Some(&invocation.test_id)
-                                || message["case_id"].as_u64()
-                                    != Some(u64::try_from(consumed).unwrap_or(u64::MAX) + 1)
-                            {
-                                observed =
-                                    Some(infrastructure("ordinary case correlation mismatch"));
-                                break;
-                            }
-                            consumed += 1;
-                            report.attempts += 1;
-                            active = Some((
-                                u64::try_from(consumed).unwrap_or(u64::MAX),
-                                vec![],
-                                Instant::now(),
-                            ));
-                            worker.enqueue(json!({"kind": "ack"}));
-                        }
-                        "baseline_done" if ready && mode == "baseline" && active.is_none() => {
-                            report.baseline_statistics = json!({"exit_code": message["exit_code"], "statistics": message["statistics"]});
-                            if ![Some(0), Some(1)].contains(&message["exit_code"].as_i64())
-                                || (message["exit_code"] == 1 && observed.is_none())
-                            {
-                                observed = Some(infrastructure(
-                                    "ordinary pytest failed outside an observed oracle",
-                                ));
-                                report.outcomes.push(Outcome {
-                                    test_id: invocation.test_id.clone(),
-                                    case_id: 0,
-                                    kind: "infrastructure".into(),
-                                    original: None,
-                                    derived: vec![],
-                                    verification: "pending".into(),
-                                    detail: None,
-                                });
-                            }
                         }
                         "skipped" if ready => {
                             if message["observation"]["nodeid"].as_str()
@@ -955,7 +865,7 @@ impl Executor {
                                 verification: "unstable".into(),
                                 ..Observation::default()
                             });
-                            if ["run", "baseline"].contains(&mode) {
+                            if mode == "run" {
                                 report.outcomes.push(Outcome {
                                     test_id: invocation.test_id.clone(),
                                     case_id: 0,
@@ -995,7 +905,7 @@ impl Executor {
                                 observed = Some(infrastructure("unknown observation"));
                                 break;
                             }
-                            if ["run", "baseline"].contains(&mode) {
+                            if mode == "run" {
                                 report.adapter_ns =
                                     report.adapter_ns.saturating_add(value.elapsed_ns);
                                 report.dispatch_roundtrip_ns =
@@ -1011,24 +921,21 @@ impl Executor {
                                 } else {
                                     report.useful += 1;
                                 }
-                                let new_finding = ["failure", "oom"].contains(&value.kind.as_str())
-                                    && (mode != "baseline" || observed.is_none());
+                                let new_finding = ["failure", "oom"].contains(&value.kind.as_str());
                                 if new_finding {
                                     report
                                         .first_discovery_ms
                                         .get_or_insert(campaign_start.elapsed().as_millis());
-                                    if mode == "run" {
-                                        original = Some(
-                                            store
-                                                .record_original(
-                                                    &invocation.test_id,
-                                                    input,
-                                                    &serde_json::to_value(&value)
-                                                        .map_err(io::Error::from)?,
-                                                )
-                                                .map_err(ExecutionError::Storage)?,
-                                        );
-                                    }
+                                    original = Some(
+                                        store
+                                            .record_original(
+                                                &invocation.test_id,
+                                                input,
+                                                &serde_json::to_value(&value)
+                                                    .map_err(io::Error::from)?,
+                                            )
+                                            .map_err(ExecutionError::Storage)?,
+                                    );
                                     observed = Some(value.clone());
                                 }
                                 if report.outcomes.len() < 256 || new_finding {
@@ -1150,7 +1057,7 @@ impl Executor {
                     .push(json!({"mode": "minimize", "active_token": candidate, "outcome": value}));
             }
             if failure
-                && (["run", "baseline"].contains(&mode)
+                && (mode == "run"
                     || ["infrastructure", "campaign_cancelled", "interrupted"]
                         .contains(&value.kind.as_str()))
             {
@@ -1198,7 +1105,6 @@ impl Executor {
         Ok(RunResult {
             observation: observed,
             original,
-            consumed,
             retained_input,
             derived,
         })
@@ -1278,16 +1184,61 @@ fn infrastructure(message: &str) -> Observation {
     }
 }
 
+/// Collection owns its wire schema and the identity used to admit artifact reuse.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Discovery {
+    #[serde(default)]
+    nodeids: Vec<String>,
+    #[serde(default)]
+    environment: Value,
+    #[serde(default)]
+    sources: Value,
+    #[serde(default)]
+    implementation_sources: Value,
+    #[serde(default)]
+    error: Option<String>,
+}
+impl Discovery {
+    pub(crate) fn targets(&self) -> &[String] {
+        &self.nodeids
+    }
+    pub(crate) fn environment(&self) -> &Value {
+        &self.environment
+    }
+    /// Whether pytest completed collection, including a successful empty selection.
+    pub(crate) fn selection_complete(&self) -> bool {
+        self.error.is_none()
+    }
+    pub(crate) fn admit(&self) -> io::Result<()> {
+        if let Some(error) = &self.error {
+            return Err(io::Error::other(format!(
+                "pytest collection failed; no targets executed: {}",
+                json!(error)
+            )));
+        }
+        if self.nodeids.is_empty() {
+            return Err(io::Error::other(
+                "selection contains no supported Hypothesis tests",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn identity(&self, selection: &[String]) -> Value {
+        json!({"environment": self.environment, "sources": self.sources,
+            "implementation_sources": self.implementation_sources, "selection": selection})
+    }
+}
+
 /// Collect through a resource-attached child with bounded retained output.
 /// # Errors
 /// Returns collection errors, deadlines and unavailable hard containment.
 #[allow(clippy::too_many_lines)] // One supervised startup handshake.
-pub fn collect(
+pub(crate) fn collect(
     python: &std::path::Path,
     args: &[String],
     limits: &Limits,
     interrupted: &AtomicBool,
-) -> io::Result<Value> {
+) -> io::Result<Discovery> {
     use std::io::Write;
     let mut command = Command::new(python);
     command.args(["-I","-S","-c", "import sys; sys.stdin.buffer.read(1); import site; site.main(); sys.path.insert(0,sys.argv.pop(1)); import collect; collect.main()"])
@@ -1481,6 +1432,46 @@ mod tests {
         assert_eq!(
             unsafe { libc::waitpid(pid, &raw mut raw, libc::WNOHANG) },
             pid
+        );
+    }
+    #[test]
+    fn reserved_baseline_statistics_stays_null_and_reproduction_modes_are_closed() {
+        let report = serde_json::to_value(ExecutionReport::default()).unwrap();
+        assert!(report["baseline_statistics"].is_null());
+        assert_eq!(Reproduction::Replay.wire_mode(), "replay");
+        assert_eq!(Reproduction::Minimize.wire_mode(), "minimize");
+    }
+
+    #[test]
+    fn discovery_admits_only_supported_targets_and_keeps_identity_shape() {
+        let discovery: Discovery = serde_json::from_value(json!({
+            "nodeids": ["test_example.py::test_case"], "environment": {"python": [3, 14]},
+            "sources": {"test_example.py": "hash"}, "implementation_sources": {"src/main.rs": "hash"}
+        })).unwrap();
+        discovery.admit().unwrap();
+        assert_eq!(discovery.targets(), ["test_example.py::test_case"]);
+        assert_eq!(discovery.environment(), &json!({"python": [3, 14]}));
+        assert_eq!(
+            discovery.identity(&["tests".into()]),
+            json!({
+                "environment": {"python": [3, 14]}, "sources": {"test_example.py": "hash"},
+                "implementation_sources": {"src/main.rs": "hash"}, "selection": ["tests"]
+            })
+        );
+        assert!(discovery.selection_complete());
+        let empty: Discovery = serde_json::from_value(json!({"nodeids": []})).unwrap();
+        assert!(empty.selection_complete());
+        assert_eq!(
+            empty.admit().unwrap_err().to_string(),
+            "selection contains no supported Hypothesis tests"
+        );
+        let failed: Discovery =
+            serde_json::from_value(json!({"nodeids": ["test"], "error": "collection failed"}))
+                .unwrap();
+        assert!(!failed.selection_complete());
+        assert_eq!(
+            failed.admit().unwrap_err().to_string(),
+            "pytest collection failed; no targets executed: \"collection failed\""
         );
     }
     #[test]

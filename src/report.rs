@@ -175,3 +175,28 @@ pub fn record_error(
     };
     completion
 }
+
+/// Publish one complete report, atomically replacing a requested file.
+/// Failed file writes leave the previous report intact and remove the pending file.
+/// # Errors
+/// Returns serialization, write, sync or rename failures.
+pub fn publish_output(path: Option<&Path>, report: &Value) -> io::Result<()> {
+    use std::io::Write;
+    let bytes = serde_json::to_vec_pretty(report)?;
+    let Some(path) = path else {
+        println!("{}", String::from_utf8_lossy(&bytes));
+        return Ok(());
+    };
+    let pending = path.with_extension(format!("pending-{}", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending)?;
+    let result = file.write_all(&bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = result.and_then(|()| std::fs::rename(&pending, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(pending);
+    }
+    result
+}

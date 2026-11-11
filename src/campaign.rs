@@ -1,5 +1,5 @@
 //! Equal-time allocation: charge actual slice wall time, including cooperative overrun.
-use crate::executor::{ExecutionReport, Executor, ExecutorConfig, Invocation, Limits, LogTail};
+use crate::executor::{ExecutionReport, ExecutionSettings, Executor, Limits, LogTail};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -167,23 +167,19 @@ pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result
         };
         let mut limits = config.limits.clone();
         limits.campaign_ms = remaining.map(|m| u64::try_from(m).unwrap_or(u64::MAX));
-        let report = match executor.run(ExecutorConfig {
-            python: config.python.clone(),
-            pytest_args: config.pytest_args.clone(),
-            invocations: vec![Invocation {
-                test_id: config.targets[index].clone(),
-                inputs: vec![],
-            }],
-            limits,
-            seed: config
-                .seed
-                .wrapping_add(u64::try_from(charged[index]).unwrap_or(u64::MAX)),
-            search: true,
-            feedback: true,
-            baseline: false,
-            output: config.store.join(format!("target-{index}")),
-            identity: json!({"environment":config.identity,"target":config.targets[index]}),
-        }) {
+        let report = match executor.explore(
+            &config.targets[index],
+            ExecutionSettings {
+                python: config.python.clone(),
+                pytest_args: config.pytest_args.clone(),
+                limits,
+                seed: config
+                    .seed
+                    .wrapping_add(u64::try_from(charged[index]).unwrap_or(u64::MAX)),
+                output: config.store.join(format!("target-{index}")),
+                identity: json!({"environment":config.identity,"target":config.targets[index]}),
+            },
+        ) {
             Ok(report) => report,
             Err(error) => {
                 targets[index].record_error(error.to_string());

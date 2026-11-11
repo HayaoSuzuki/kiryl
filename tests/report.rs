@@ -69,3 +69,23 @@ fn command_errors_share_completion_and_preserve_available_context() {
         assert_eq!(report["elapsed_ms"], 7);
     }
 }
+
+#[test]
+fn publication_replaces_complete_reports_and_preserves_them_on_pending_collision() {
+    let root = std::env::temp_dir().join(format!("kiryl-publication-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("report.json");
+    std::fs::write(&path, b"stale").unwrap();
+    kiryl::report::publish_output(Some(&path), &json!({"complete":true})).unwrap();
+    let prior = std::fs::read(&path).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&prior).unwrap(),
+        json!({"complete":true})
+    );
+    let pending = path.with_extension(format!("pending-{}", std::process::id()));
+    std::fs::write(&pending, b"another writer").unwrap();
+    assert!(kiryl::report::publish_output(Some(&path), &json!({"complete":false})).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), prior);
+    assert_eq!(std::fs::read(&pending).unwrap(), b"another writer");
+    std::fs::remove_dir_all(root).unwrap();
+}

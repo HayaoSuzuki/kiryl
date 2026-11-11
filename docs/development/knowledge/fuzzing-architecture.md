@@ -16,11 +16,11 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: 37ad37b04039cc7e2322b4893406b3ef4abc7319574b069ace528d77e06e99d4
+  sha256: 15999f9e1bf0b1e27d184d4e5018c684534f748e1436a1ead2129f67ea8025ca
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: b315e6ce6b3452333ae87a887f6658eb7da00a9fdca7c4d21f218f8891703c8b
+  sha256: f6ed63e3b07beeb842286cd649fed0b118c25ea34c0448f3ad435b26acca3a86
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
@@ -31,7 +31,11 @@ sources:
 - id: product-report
   resource: ../../../src/report.rs
   working_tree: modified
-  sha256: 14643e5d55f489fb0252c186cbd1e66f3a8d500b3a345643c81c1c1b5db6672e
+  sha256: 657a5391af7b0aebc5829113c867420d20139e63ded9cbd6688d4df48a2ee8b0
+- id: product-command
+  resource: ../../../src/command.rs
+  working_tree: untracked
+  sha256: d924c98b9493480077306af0e0be7d727078e1161d1b39687ae2d3d63d35ac3e
 ---
 # Selected direction
 
@@ -189,3 +193,21 @@ reimplementing truncation and saturation. The [aggregation review](../work/produ
 records the alternatives, compatibility assertions, regression/property tests and
 scoped review results. Revisit this boundary if another consumer must read back
 serialized progress or recompute stream accounting.[^product-executor]
+
+# Product command ownership
+
+Command owns discovery admission, remaining wall-time budget, saved-finding
+compatibility and final report construction. Its result retains replay's writer
+lock through publication. CLI owns syntax and signal installation; it no longer
+decodes collection fields or configures experimental worker modes. Discovery
+hides the Python wire envelope and source identity encoding; executor accepts
+only guided exploration or typed replay/minimize. Unused product baseline/fixed
+modes were removed without changing isolated experiments or version-1 output.
+The [command review](../work/product-cli/command-boundary-review.md) and
+[executor review](../work/product-cli/executor-boundary-review.md) record reasons,
+alternatives and five passes per phase. Reconsider if another caller needs to
+know discovery fields or manage the saved-finding transaction lifetime.
+User arguments and guarantees are unchanged; no user-guide change is needed.
+[^product-command][^product-executor][^product-report]
+
+[^product-command]: [Product command transaction](../../../src/command.rs).

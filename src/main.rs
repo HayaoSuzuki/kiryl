@@ -1,11 +1,11 @@
 //! Checkout CLI for trusted Python tests.
 use kiryl::{
-    campaign::{self, CampaignConfig},
-    executor::{Executor, ExecutorConfig, Limits},
+    command::{Operation, Request},
+    executor::Limits,
 };
 use serde_json::{Value, json};
 use std::{
-    env, fs, io,
+    env, io,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -92,145 +92,34 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
             invalid("memory must be positive and retained output cannot exceed 16 MiB").into(),
         );
     }
-    let replay = if command == "run" {
-        None
-    } else {
-        Some(kiryl::artifacts::ReplayContext::open(Path::new(
-            finding.as_ref().ok_or_else(|| invalid("missing finding"))?,
-        ))?)
+    let operation = match command.as_str() {
+        "run" => Operation::Run,
+        "replay" => Operation::Replay(PathBuf::from(
+            finding.ok_or_else(|| invalid("missing finding"))?,
+        )),
+        _ => Operation::Minimize(PathBuf::from(
+            finding.ok_or_else(|| invalid("missing finding"))?,
+        )),
     };
-    if selection.is_empty()
-        && let Some(context) = &replay
-    {
-        selection = context.selection().to_vec();
-    }
     let flag = Arc::new(AtomicBool::new(false));
     let handler = Arc::clone(&flag);
     ctrlc::set_handler(move || handler.store(true, Ordering::Relaxed))?;
-    let requested_limits = serde_json::to_value(&limits)?;
-    context["effective_limits"] = requested_limits.clone();
-    context["selection"] = json!(selection);
-    let overall_start = std::time::Instant::now();
-    let discovered = kiryl::executor::collect(&python, &selection, &limits, &flag)?;
-    if let Some(budget) = limits.campaign_ms.as_mut() {
-        *budget = budget
-            .saturating_sub(u64::try_from(overall_start.elapsed().as_millis()).unwrap_or(u64::MAX));
-    }
-    context["environment"] = discovered["environment"].clone();
-    if let Some(known) = discovered["nodeids"].as_array() {
-        context["targets"] = json!(
-            known
-                .iter()
-                .map(|target| json!({"target":target,"status":"unexecuted"}))
-                .collect::<Vec<_>>()
-        );
-    }
-    if discovered
-        .get("error")
-        .is_some_and(|value| !value.is_null())
-    {
-        return Err(invalid(&format!(
-            "pytest collection failed; no targets executed: {}",
-            discovered["error"]
-        ))
-        .into());
-    }
-    context["environment"] = discovered["environment"].clone();
-    let targets: Vec<String> = serde_json::from_value(discovered["nodeids"].clone())?;
-    context["selection_complete"] = json!(true);
-    if targets.is_empty() {
-        return Err(invalid("selection contains no supported Hypothesis tests").into());
-    }
-    let identity = json!({"environment":discovered["environment"],"sources":discovered["sources"],"implementation_sources":discovered["implementation_sources"],"selection":selection});
-    context["environment_identity"] = identity.clone();
-    context["targets"] = json!(
-        targets
-            .iter()
-            .map(|target| json!({"target":target,"status":"unexecuted"}))
-            .collect::<Vec<_>>()
-    );
-    let environment_identity = identity.clone();
-    let remaining_execution_limits = serde_json::to_value(&limits)?;
-    let replay_python = python.clone();
-    let mut report = if command == "run" {
-        campaign::run(
-            &CampaignConfig {
-                python,
-                pytest_args: selection,
-                targets,
-                identity,
-                store,
-                limits,
-                seed,
-            },
-            &flag,
-        )?
-    } else {
-        let replay = replay
-            .as_ref()
-            .ok_or_else(|| invalid("missing replay context"))?;
-        replay.check_environment(&identity)?;
-        let config = ExecutorConfig {
+    kiryl::command::execute(
+        Request {
+            operation,
             python,
-            pytest_args: selection,
-            invocations: vec![],
+            selection,
             limits,
             seed,
-            search: false,
-            feedback: true,
-            baseline: false,
-            output: replay.directory().to_owned(),
-            identity: replay.store_identity().clone(),
-        };
-        serde_json::to_value(
-            Executor::new(flag).operation(
-                &config,
-                replay
-                    .original()
-                    .to_str()
-                    .ok_or_else(|| invalid("non UTF-8 finding path"))?,
-                &command,
-            )?,
-        )?
-    };
-    let best_effort = requested_limits["allow_best_effort"]
-        .as_bool()
-        .unwrap_or(false);
-    report["effective_limits"] = requested_limits;
-    report["remaining_execution_limits"] = remaining_execution_limits;
-    report["environment_identity"] = environment_identity;
-    report["schema_version"] = json!(1);
-    report["command"] = json!(command);
-    report["total_elapsed_ms"] = json!(overall_start.elapsed().as_millis());
-    kiryl::report::present_findings(
-        &mut report,
-        &env::current_exe()?,
-        &replay_python,
-        best_effort,
-    )?;
-    let bytes = serde_json::to_vec_pretty(&report)?;
-    if let Some(path) = report_path {
-        publish(&path, &bytes)?;
-    } else {
-        println!("{}", String::from_utf8(bytes)?);
-    }
-    Ok(kiryl::report::exit_code(&report))
+            store,
+        },
+        context,
+        flag,
+    )?
+    .publish(report_path.as_deref())
+    .map_err(Into::into)
 }
-fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    let pending = path.with_extension(format!("pending-{}", std::process::id()));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = file.write_all(bytes).and_then(|()| file.sync_all());
-    drop(file);
-    let result = result.and_then(|()| fs::rename(&pending, path));
-    if result.is_err() {
-        let _ = fs::remove_file(pending);
-    }
-    result
-}
+
 fn main() {
     let started = std::time::Instant::now();
     let args: Vec<_> = env::args_os().skip(1).collect();
@@ -241,7 +130,9 @@ fn main() {
             kiryl::report::record_error(&mut context, error.as_ref(), started.elapsed());
         let bytes = serde_json::to_vec_pretty(&context).unwrap_or_default();
         if let Some([_, report_path]) = args.windows(2).find(|pair| pair[0] == "--report") {
-            if let Err(error) = publish(Path::new(report_path), &bytes) {
+            if let Err(error) =
+                kiryl::report::publish_output(Some(Path::new(report_path)), &context)
+            {
                 eprintln!("kiryl: error report persistence failed: {error}");
                 println!("{}", String::from_utf8_lossy(&bytes));
                 return kiryl::report::Completion::Infrastructure.exit_code();
