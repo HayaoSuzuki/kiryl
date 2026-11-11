@@ -89,10 +89,10 @@ Campaign state tracks remaining monotonic wall budget across collection/setup/se
 ## Task 5: Acceptance and CI
 
 - [x] Extend existing product CI using hoimin's finite fuzz budget/corpus retention and taloon's separated Rust/Python quality jobs; retain SHA pins, read-only permissions and job timeouts. Do not import publishing workflows.
-- [ ] Run product end-to-end scenarios on macOS/Linux/Windows × CPython 3.14/3.15; retain revision/environment evidence. Delegated-cgroup Linux hard enforcement is a separate required execution, not a skip counted as success.
+- [x] Run product end-to-end scenarios on macOS/Linux/Windows × CPython 3.14/3.15; retain revision/environment evidence. Delegated-cgroup Linux hard enforcement is a separate required execution, not a skip counted as success.
 - [x] Measure long runs: elapsed time, trials, RSS, saved bytes and bounded histories. Compare ordinary Hypothesis with equal seed/time and isolated databases/corpora, including negative results.
 - [x] Update user commands/prerequisites and existing OKF owners with actual evidence and remaining resource gates.
-- [ ] Complete five final implementation/test review passes, all repository checks and final review before creating a PR. Do not claim unexecuted platform acceptance.
+- [x] Complete five final implementation/test review passes, all repository checks and final review before creating a PR. Do not claim unexecuted platform acceptance.
 
 ## Design self-review record
 
@@ -119,3 +119,11 @@ review records; checkboxes do not establish native matrix acceptance. Task 5's
 native matrix/hard-resource and final branch validation remain open until their
 actual jobs pass. The 120-second boundedness observation is finite evidence,
 not a proof of indefinite resource stability.
+
+## Completion evidence
+
+Product implementation and native acceptance passed at revision `795fe6e`.
+The [native matrix record](evidence/native-matrix.json) fixes the six platform/
+interpreter observations and all successful checks to that source revision.
+Subsequent completion-record edits change documentation only. The finite
+boundedness/comparison observations retain their own snapshots and limits.

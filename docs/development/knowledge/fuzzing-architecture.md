@@ -149,3 +149,9 @@ owner; unknown collection completion is kept explicit instead of preserving a
 stale successful report.[^product-report]
 
 [^product-report]: [Finding presentation](../../../src/report.rs).
+
+The [final native matrix](../work/product-cli/evidence/native-matrix.json) records
+successful product CLI execution on all six intended OS/interpreter cells and
+separate hard-resource gates at source revision `795fe6e`. Platform-specific
+skips do not stand in for required hard enforcement; those four jobs ran without
+best effort. The acceptance record owns the exact checks, limits and snapshots.

@@ -1,10 +1,10 @@
 # Current status
 
-Product implementation now includes CLI, scheduler, Python adapter, bounded corpus,
-fresh replay/minimization and expanded native CI. See integration-review.md,
-storage-review.md, acceptance-review.md, benchmark-review.md and python/REVIEW.md
-for current evidence. Native CI and hard-resource gates are being completed;
-earlier entries below describe the initial storage increment only.
+Implementation, final review fixes and all native acceptance checks completed at
+source revision `795fe6e`. See [the native matrix record](evidence/native-matrix.json)
+for the six product OS/interpreter cells, four hard-resource gates, Rust/Python
+quality, formal/fuzz checks, documentation and dependency audit success. Earlier
+entries below are historical increments, not the current feature inventory.
 
 # Product CLI progress
 

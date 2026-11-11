@@ -106,3 +106,15 @@ execution remains a separate required gate; best-effort smoke is not its
 substitute. Native Windows handle behavior, long-run resource measurements,
 equal-budget Hypothesis comparisons, wire fuzzing and minimization end-to-end
 acceptance are not established by the scheduler model or this finite campaign.
+
+## Final product acceptance
+
+All six product OS/interpreter jobs passed at source revision `795fe6e`, including
+Windows console interruption, direct handle output and cleanup. Each cell ran 76
+Python tests; platform-specific cases skipped only where inapplicable (four each
+on macOS/Linux, three each on Windows). Required hard-resource jobs passed
+separately without best effort. Rust quality, dependency audit/policy, docs,
+workflow checks, Lean correspondence and finite fuzz checks also passed. The
+[native matrix record](evidence/native-matrix.json) retains job links and hashes
+of the inspected JUnit/smoke artifacts. These observed prerequisites do not imply
+support for untested dependency versions or unlimited future resource stability.
