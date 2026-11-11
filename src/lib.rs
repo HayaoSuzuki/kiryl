@@ -12,3 +12,5 @@ pub mod report;
 mod resource;
 mod search;
 mod wire;
+
+mod verification;

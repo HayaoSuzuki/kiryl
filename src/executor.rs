@@ -1,7 +1,13 @@
 // Copyright (c) 2026 kiryl contributors
 //! Native single-worker execution with bounded transport, deadlines and retained active inputs.
 //! Mechanisms adapted from the separately tested feasibility controller at faffb19.
-use crate::{artifacts::ArtifactStore, resource, search::Search, wire};
+use crate::{
+    artifacts::ArtifactStore,
+    resource,
+    search::Search,
+    verification::{FailureIdentity, Verdict},
+    wire,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -410,31 +416,16 @@ impl Executor {
                     &mut None,
                 )?;
                 report.replay_ms += replay_start.elapsed().as_millis();
-                let verification = verified
-                    .observation
-                    .as_ref()
-                    .map_or("pending", |o| {
-                        if o.kind == "failure" && o.fingerprint == observed.fingerprint {
-                            "confirmed"
-                        } else if ["campaign_cancelled", "interrupted", "infrastructure"]
-                            .contains(&o.kind.as_str())
-                        {
-                            "pending"
-                        } else {
-                            "unstable"
-                        }
-                    })
-                    .to_owned();
-                report.outcomes[index]
-                    .verification
-                    .clone_from(&verification);
+                let verification =
+                    FailureIdentity::observed(&observed).check(verified.observation.as_ref());
+                report.outcomes[index].verification = verification.candidate_status().into();
                 if let Some(value) = verified.observation {
                     let path = store
                         .derived(original, &json!({"mode": "replay", "observation": value}))
                         .map_err(ExecutionError::Storage)?;
                     report.outcomes[index].derived.push(path);
                 }
-                if verification == "confirmed" && !self.cancelled(&config, start) {
+                if verification == Verdict::Confirmed && !self.cancelled(&config, start) {
                     let shrink_start = Instant::now();
                     let shrunk = self.session(
                         &config,
@@ -466,24 +457,11 @@ impl Executor {
                                 &mut report,
                                 &mut None,
                             )?;
-                            evidence["verification"] = json!(if checked
-                                .observation
-                                .as_ref()
-                                .is_some_and(|o| o.kind == "failure"
-                                    && o.fingerprint == observed.fingerprint)
-                            {
-                                "confirmed"
-                            } else if checked.observation.as_ref().is_none_or(|o| [
-                                "campaign_cancelled",
-                                "interrupted",
-                                "infrastructure"
-                            ]
-                            .contains(&o.kind.as_str()))
-                            {
-                                "pending"
-                            } else {
-                                "unstable"
-                            });
+                            evidence["verification"] = json!(
+                                FailureIdentity::observed(&observed)
+                                    .check(checked.observation.as_ref())
+                                    .candidate_status()
+                            );
                         }
                         report.outcomes[index].derived.push(
                             store
@@ -511,19 +489,9 @@ impl Executor {
                     &mut report,
                     &mut None,
                 )?;
-                let status = if verification.observation.as_ref().is_none_or(|v| {
-                    ["campaign_cancelled", "interrupted", "infrastructure"]
-                        .contains(&v.kind.as_str())
-                }) {
-                    "pending"
-                } else if verification.observation.as_ref().is_some_and(|v| {
-                    v.kind == observed.kind
-                        && (v.kind != "native_crash" || v.rendered == observed.rendered)
-                }) {
-                    "confirmed"
-                } else {
-                    "unstable"
-                };
+                let status = FailureIdentity::observed(&observed)
+                    .check(verification.observation.as_ref())
+                    .candidate_status();
                 report.outcomes[index].verification = status.into();
                 let evidence = json!({"mode": "raw_replay", "input": result.retained_input, "verification": status, "observation": verification.observation});
                 report.outcomes[index].derived.push(
@@ -595,28 +563,11 @@ impl Executor {
             &mut None,
         )?;
         report.operation_observation.clone_from(&result.observation);
-        let expected = source.observation.fingerprint.as_deref();
+        let identity = FailureIdentity::saved(&source.observation);
         let mut verification = "pending";
         let mut paths = vec![];
         if let Some(observation) = &result.observation {
-            verification = if observation.kind == "skip" {
-                "skipped"
-            } else if observation.kind == "reject" {
-                "rejected"
-            } else if ["campaign_cancelled", "interrupted", "infrastructure"]
-                .contains(&observation.kind.as_str())
-            {
-                "pending"
-            } else if (observation.kind == "failure"
-                && observation.fingerprint.as_deref() == expected)
-                || (token.is_none()
-                    && observation.kind == source.observation.kind
-                    && observation.rendered.as_deref() == source.observation.rendered.as_deref())
-            {
-                "confirmed"
-            } else {
-                "unstable"
-            };
+            verification = identity.check(Some(observation)).status();
             paths.push(
                 store
                     .derived(
@@ -649,18 +600,9 @@ impl Executor {
                     &mut report,
                     &mut None,
                 )?;
-                verification = if checked.observation.as_ref().is_some_and(|value| {
-                    value.kind == "failure" && value.fingerprint.as_deref() == expected
-                }) {
-                    "confirmed"
-                } else if checked.observation.as_ref().is_none_or(|o| {
-                    ["campaign_cancelled", "interrupted", "infrastructure"]
-                        .contains(&o.kind.as_str())
-                }) {
-                    "pending"
-                } else {
-                    "unstable"
-                };
+                verification = FailureIdentity::semantic(source.observation.fingerprint.as_deref())
+                    .check(checked.observation.as_ref())
+                    .candidate_status();
                 evidence["verification"] = json!(verification);
                 report
                     .operation_observation

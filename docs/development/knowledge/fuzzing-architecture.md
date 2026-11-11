@@ -20,7 +20,7 @@ sources:
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: f6ed63e3b07beeb842286cd649fed0b118c25ea34c0448f3ad435b26acca3a86
+  sha256: eb5e1dd0210ff439d71a21965cfbef307ea19d6cab609e002c7312d61506d0e4
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
@@ -36,6 +36,10 @@ sources:
   resource: ../../../src/command.rs
   working_tree: untracked
   sha256: d924c98b9493480077306af0e0be7d727078e1161d1b39687ae2d3d63d35ac3e
+- id: product-verification
+  resource: ../../../src/verification.rs
+  working_tree: untracked
+  sha256: 3017dabc98e4638b098d65c179120c2b4e74e5d7ddc21daf1032dd9f335ef8e8
 ---
 # Selected direction
 
@@ -211,3 +215,21 @@ User arguments and guarantees are unchanged; no user-guide change is needed.
 [^product-command][^product-executor][^product-report]
 
 [^product-command]: [Product command transaction](../../../src/command.rs).
+
+# Fresh reproduction policy
+
+FailureIdentity and Verdict now own reproduction matching and incomplete-check
+classification across automatic replay, reduced-candidate checking and standalone
+operations. Executor retains fresh process, evidence persistence and acknowledgment
+sequencing; output strings no longer decide whether automatic shrinking may start.
+Automatic timeout confirmation compares kind alone; standalone raw replay retains
+exact rendered-detail matching and the version-1 semantic alternative. Skip/reject
+remain distinct standalone labels but imply an unstable candidate. Missing checks,
+interruption, campaign expiry and infrastructure never confirm reproduction.
+The [policy plan and review](../work/product-cli/verification-plan.md) record
+alternatives, five reviews per phase and compatibility tests. No CLI, storage or
+wire-format changes require user-guide updates. Revisit this policy if outcome
+kinds or saved-record matching rules change; do not reintroduce copies in callers.
+[^product-verification][^product-executor]
+
+[^product-verification]: [Fresh reproduction policy](../../../src/verification.rs).
