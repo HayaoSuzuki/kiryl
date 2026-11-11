@@ -29,3 +29,6 @@ workspace = true
 [profile.release]
 lto = "thin"
 strip = true
+
+[dependencies]
+serde_json = "1"

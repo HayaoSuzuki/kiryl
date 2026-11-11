@@ -40,3 +40,34 @@ build passed. No product CLI/platform acceptance or fuzz campaign was executed.
 
 PR is a draft for the initial storage primitive, references #5 without closing
 it, and does not represent completion of the approved implementation plan.
+
+## Manifest/corpus increment
+
+Added open_matching with strict version+identity equality and refusal to adopt
+pre-existing unversioned data. Identity content is caller-owned; automatic source
+and interpreter identity generation remains unimplemented. Added corpus snapshot
+limits (256 entries, 4096 bytes/input, 5 MiB encoded read cap). Failed validation
+preserves the previous snapshot. No CLI integration yet.
+
+Implementation self-review passes:
+1. Requirements: schema and supplied target/variant/environment comparison now
+   exist; campaign-generated identities remain a gap.
+2. Errors: manifest mismatch releases writer ownership through Drop and preserves
+   originals; pre-existing pending files fail conservatively.
+3. Side effects: hard-link publication prevents replacing a manifest; corpus uses
+   rename after closing its file. No machine-crash/directory-fsync claim.
+4. Sensitivity: tests exercise mismatching identities, schema 2 and corpus count
+   overflow while checking previous bytes remain unchanged.
+5. Design: provisional 6.25/10 remains; typed IDs, semantic identity ownership and
+   newcomer-facing guarantees still fail the earlier diagnostics. Keep these
+   requirements in Task 1 rather than adding a generic storage framework.
+
+Test self-review passes:
+1. Scope: five integration tests exercise primitives; Task 1 still incomplete.
+2. Boundaries: 256/257 count boundary covered at rejection; per-input length and
+   malformed encoded corpus still need dedicated tests.
+3. State: reopen and mismatch paths demonstrate lock release and original retention.
+4. Sensitivity: new tests failed with missing APIs before implementation; unsupported
+   schema must never be accepted merely because the identity matches.
+5. Evidence: local macOS Rust only; native Windows replacement, injected partial
+   writes, Linux disk-full and fuzz/property/formal checks remain pending.

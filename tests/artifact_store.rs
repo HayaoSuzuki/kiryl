@@ -63,3 +63,37 @@ fn directories_and_malformed_names_are_not_originals() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn environment_mismatch_and_unknown_schema_preserve_store() {
+    let root = std::env::temp_dir().join(format!("kiryl-manifest-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let identity = serde_json::json!({"target":"test_x.py::test_x[a]", "python":"3.14"});
+    let mut store = ArtifactStore::open_matching(&root, &identity).unwrap();
+    let original = store.save_original(b"original").unwrap();
+    drop(store);
+    assert!(ArtifactStore::open_matching(&root, &serde_json::json!({"target":"other"})).is_err());
+    assert_eq!(fs::read(&original).unwrap(), b"original");
+    drop(ArtifactStore::open_matching(&root, &identity).unwrap());
+    fs::write(
+        root.join("manifest.json"),
+        br#"{"version":2,"identity":{}}"#,
+    )
+    .unwrap();
+    assert!(ArtifactStore::open_matching(&root, &identity).is_err());
+    assert_eq!(fs::read(original).unwrap(), b"original");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn corpus_is_bounded_and_round_trips() {
+    let root = std::env::temp_dir().join(format!("kiryl-corpus-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let mut store = ArtifactStore::open(&root).unwrap();
+    store.save_corpus(&[vec![0, 255], vec![]]).unwrap();
+    assert_eq!(store.load_corpus().unwrap(), vec![vec![0, 255], vec![]]);
+    assert!(store.save_corpus(&vec![vec![1]; 257]).is_err());
+    assert_eq!(store.load_corpus().unwrap(), vec![vec![0, 255], vec![]]);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

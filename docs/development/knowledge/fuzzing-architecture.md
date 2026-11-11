@@ -91,3 +91,10 @@ can leave a lock requiring manual inspection, and no automatic stale-lock
 recovery is promised. See the [progress record](../work/product-cli/progress.md)
 for partial checks and unresolved review findings. This does not establish the
 product acceptance matrix or adopt the experimental implementation wholesale.
+
+The storage increment also provides caller-supplied identity comparison in a
+version-1 manifest and bounded corpus snapshots (256 entries, 4096 bytes per
+entry). These primitives do not compute source/environment identity or connect
+the corpus to a campaign. Mismatches preserve data. Local checks and the
+remaining platform/failure-injection limits are recorded in the same progress
+record; product acceptance remains pending.
