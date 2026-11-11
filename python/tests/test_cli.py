@@ -343,6 +343,8 @@ def test_timeout_cleans_worker_descendant_tree(tmp_path: Path) -> None:
     import signal  # noqa: PLC0415
     import time  # noqa: PLC0415
 
+    if sys.platform != "linux":
+        pytest.skip("Linux native process status")
     pid_file = tmp_path / "child.txt"
     project(
         tmp_path,
@@ -535,3 +537,63 @@ def test_store_lock_failure_remains_visible_in_target_report(tmp_path: Path) -> 
     assert target["report"]["outcomes"][0]["kind"] == "infrastructure"
     assert target["report"]["outcomes"][0]["detail"]
     assert lock.read_text() == "existing owner"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows console control event")
+def test_windows_untimed_console_break_persists_report(tmp_path: Path) -> None:
+    """A real console CTRL_BREAK_EVENT interrupts the product process group."""
+    import ctypes  # noqa: PLC0415 -- native Windows console ownership
+    import signal  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    if sys.platform != "win32":
+        pytest.skip("Windows console control event")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetConsoleCP.restype = ctypes.c_uint32
+    kernel.AllocConsole.restype = ctypes.c_int
+    kernel.FreeConsole.restype = ctypes.c_int
+    allocated = kernel.GetConsoleCP() == 0
+    if allocated and not kernel.AllocConsole():
+        raise ctypes.WinError(ctypes.get_last_error())
+    marker = tmp_path / "started.txt"
+    project(
+        tmp_path,
+        "import time\nfrom pathlib import Path\nfrom hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_wait(n):\n"
+        f"    Path({str(marker)!r}).write_text('started')\n    time.sleep(20)\n",
+    )
+    process = None
+    try:
+        process = subprocess.Popen(  # noqa: S603 -- built product and temporary project
+            [
+                str(BINARY),
+                "run",
+                "test_target.py",
+                "--python",
+                sys.executable,
+                "--best-effort",
+                "--store",
+                str(tmp_path / "store"),
+                "--report",
+                str(tmp_path / "interrupt.json"),
+            ],
+            cwd=tmp_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        deadline = time.monotonic() + 15
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), process.poll()
+        process.send_signal(signal.CTRL_BREAK_EVENT)
+        stdout, stderr = process.communicate(timeout=15)
+        assert process.returncode == 130, (stdout, stderr)  # noqa: PLR2004 -- public exit
+        report = json.loads((tmp_path / "interrupt.json").read_text())
+        assert report["interrupted"] is True
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
+        if allocated:
+            kernel.FreeConsole()

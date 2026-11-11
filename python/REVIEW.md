@@ -231,3 +231,30 @@ Five review passes checked (1) setup diagnostics originate from pytest reports,
 unchanged, and (5) infrastructure exit 2 is checked independently of report shape.
 Focused native macOS CPython 3.14 run: 3 passed, 12 deselected in 0.80 seconds.
 Ruff check, formatting and ty passed. No additional feature work was introduced.
+
+## Windows console interruption acceptance gate
+
+Added a Windows-only untimed CLI test using a real CREATE_NEW_PROCESS_GROUP
+and CTRL_BREAK_EVENT. It checks GetConsoleCP and allocates an actual console
+with AllocConsole when the CI process lacks one; allocation failure fails the
+test rather than simulating success or skipping on Windows. It waits for a
+marker written inside the running target, then requires exit 130 and an
+interrupted report. Finally kills a still-running parent and frees only a
+console allocated by this test. The earlier missing Windows-console test gap
+now has a regression; native execution remains unverified locally.
+
+Five checks reviewed native event delivery, process group isolation, console
+ownership, marker-based timing and failure cleanup. Ruff check, formatting and
+ty passed. Local macOS focused collection: 1 expected platform skip, 15
+deselected in 0.08 seconds. Native Windows CI is the required remaining gate.
+No runtime source was changed for this test.
+
+## Cross-platform static typing correction
+
+Windows native ty identified signal.SIGKILL in the Linux cleanup test because
+pytest's skip decorator does not narrow sys.platform for static analysis. Added
+an explicit Linux guard inside that test before native operations, preserving
+normal native execution and all behavioral assertions. No typing rules were
+disabled. ty check passed for --python-platform win32, linux and darwin with the
+product interpreter; Ruff and formatting checks passed. This validates platform
+symbol resolution, not native execution of other-platform tests.

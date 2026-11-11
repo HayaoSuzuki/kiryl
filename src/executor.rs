@@ -143,6 +143,7 @@ pub struct ExecutionReport {
     pub exploration_ms: u128,
     pub shrink_ms: u128,
     pub baseline_statistics: Value,
+    pub operation_observation: Option<Observation>,
 }
 impl ExecutionReport {
     #[must_use]
@@ -651,11 +652,16 @@ impl Executor {
             &mut report,
             &mut None,
         )?;
+        report.operation_observation.clone_from(&result.observation);
         let expected = source["observation"]["fingerprint"].as_str();
         let mut verification = "pending";
         let mut paths = vec![];
         if let Some(observation) = &result.observation {
-            verification = if ["campaign_cancelled", "interrupted", "infrastructure"]
+            verification = if observation.kind == "skip" {
+                "skipped"
+            } else if observation.kind == "reject" {
+                "rejected"
+            } else if ["campaign_cancelled", "interrupted", "infrastructure"]
                 .contains(&observation.kind.as_str())
             {
                 "pending"
@@ -716,6 +722,9 @@ impl Executor {
                     "unstable"
                 };
                 evidence["verification"] = json!(verification);
+                report
+                    .operation_observation
+                    .clone_from(&checked.observation);
                 evidence["observation"] =
                     serde_json::to_value(checked.observation).map_err(io::Error::from)?;
             }
