@@ -724,7 +724,10 @@ impl Executor {
         report.outcomes.push(Outcome {
             test_id: invocation.test_id,
             case_id: 0,
-            kind: "failure".into(),
+            kind: source["observation"]["kind"]
+                .as_str()
+                .unwrap_or("failure")
+                .into(),
             original: Some(original.into()),
             derived: paths,
             verification: verification.into(),

@@ -9,7 +9,12 @@ from typing import Any
 
 import pytest
 
-BINARY = Path(__file__).parents[2] / "target" / "debug" / ("kiryl.exe" if sys.platform == "win32" else "kiryl")
+BINARY = (
+    Path(__file__).parents[2]
+    / "target"
+    / "debug"
+    / ("kiryl.exe" if sys.platform == "win32" else "kiryl")
+)
 pytestmark = pytest.mark.skipif(not BINARY.exists(), reason="cargo build required")
 
 
@@ -189,3 +194,137 @@ def test_hard_limit_rejection_precedes_target_import(tmp_path: Path) -> None:
     )
     assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
     assert not marker.exists()
+
+
+def test_binary_fd_descendant_output_is_bounded(tmp_path: Path) -> None:
+    """Binary output from both worker and child never becomes control frames."""
+    project(
+        tmp_path,
+        """
+import os, subprocess, sys
+from hypothesis import given, strategies as st
+@given(st.integers())
+def test_output(n):
+    os.write(1, b"worker-out\\xff" * 4096)
+    os.write(2, b"worker-err\\xfe" * 4096)
+    child = "import os;os.write(1,b'child-out'*4096);os.write(2,b'child-err'*4096)"
+    subprocess.run([sys.executable, "-c", child], check=True)
+""",
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -s\n")
+    code, report = run(tmp_path, "output", "--output-bytes", "1024")
+    assert code in (0, 1)
+    logs = report["targets"][0]["report"]["logs"]
+    assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004 -- configured limit
+    assert sum(log["observed"] for log in logs) > 1024  # noqa: PLR2004
+    assert any(log["truncated"] for log in logs)
+    assert report["targets"][0]["report"]["useful"] > 0
+
+
+def test_native_crash_original_and_fresh_raw_replay(tmp_path: Path) -> None:
+    """A native abort preserves the exact candidate and reproduces in a new worker."""
+    project(
+        tmp_path,
+        "import os\nfrom hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_abort(n):\n    os.abort()\n",
+    )
+    code, report = run(tmp_path, "crash")
+    assert code == 1
+    crash = next(
+        item
+        for item in report["targets"][0]["report"]["outcomes"]
+        if item["kind"] == "native_crash"
+    )
+    original = Path(crash["original"])
+    before = original.read_bytes()
+    assert json.loads(before)["input"] == [0] * 512
+    result = invoke(
+        tmp_path,
+        "replay",
+        str(original),
+        "--best-effort",
+        "--duration",
+        "2",
+        "--report",
+        str(tmp_path / "replay.json"),
+    )
+    assert result.returncode == 1, result.stderr
+    assert original.read_bytes() == before
+    replay = json.loads((tmp_path / "replay.json").read_text())
+    assert replay["outcomes"][0]["kind"] == "native_crash"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX SIGINT; Windows console event requires runner"
+)
+def test_untimed_campaign_interrupt_persists_report(tmp_path: Path) -> None:
+    """SIGINT ends an untimed campaign with exit 130 and an interrupted report."""
+    import signal  # noqa: PLC0415 -- POSIX subprocess test
+    import time  # noqa: PLC0415
+
+    marker = tmp_path / "started.txt"
+    project(
+        tmp_path,
+        "import time\nfrom pathlib import Path\nfrom hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_wait(n):\n"
+        f"    Path({str(marker)!r}).write_text('started')\n    time.sleep(20)\n",
+    )
+    process = subprocess.Popen(  # noqa: S603 -- built product and temporary project
+        [
+            str(BINARY),
+            "run",
+            "test_target.py",
+            "--python",
+            sys.executable,
+            "--best-effort",
+            "--store",
+            str(tmp_path / "store"),
+            "--report",
+            str(tmp_path / "interrupt.json"),
+        ],
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), process.poll()
+        process.send_signal(signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 130, (stdout, stderr)  # noqa: PLR2004 -- public exit
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
+    assert json.loads((tmp_path / "interrupt.json").read_text())["interrupted"] is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="direct Windows standard handle")
+def test_windows_direct_standard_handle_output(tmp_path: Path) -> None:
+    """Win32 WriteFile output follows the same bounded drain as CRT fd writes."""
+    project(
+        tmp_path,
+        """
+import ctypes
+from hypothesis import given, strategies as st
+@given(st.integers())
+def test_handle(n):
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetStdHandle.restype = ctypes.c_void_p
+    kernel.WriteFile.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
+                                ctypes.c_void_p, ctypes.c_void_p)
+    payload = ctypes.create_string_buffer(b"direct-handle" * 4096)
+    written = ctypes.c_uint32()
+    for handle_id in (-11, -12):
+        assert kernel.WriteFile(kernel.GetStdHandle(handle_id), payload, len(payload),
+                                ctypes.byref(written), None)
+""",
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -s\n")
+    code, report = run(tmp_path, "handles", "--output-bytes", "1024")
+    assert code in (0, 1)
+    logs = report["targets"][0]["report"]["logs"]
+    assert sum(len(log["tail"]) for log in logs) <= 1024  # noqa: PLR2004
+    assert any(log["truncated"] for log in logs)
