@@ -85,9 +85,10 @@ pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result
             }
         };
         charged[index] = charged[index].saturating_add(report.exploration_ms.max(1));
-        stopped[index] = report.outcomes.iter().any(|outcome| {
-            !["pass", "reject", "campaign_cancelled"].contains(&outcome.kind.as_str())
-        });
+        stopped[index] = report
+            .outcomes
+            .iter()
+            .any(|outcome| crate::report::stops_search(&outcome.kind));
         let attempts = targets[index]["attempts"]
             .as_u64()
             .unwrap_or(0)
@@ -124,27 +125,4 @@ pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result
     Ok(
         json!({"schema_version":1,"command":"run","effective_limits":config.limits,"targets":targets,"environment":config.identity,"interrupted":interrupted.load(Ordering::Relaxed),"elapsed_ms":started.elapsed().as_millis()}),
     )
-}
-/// Map a product report to the documented process exit status.
-#[must_use]
-pub fn exit_code(report: &Value) -> i32 {
-    if report["interrupted"] == true {
-        return 130;
-    }
-    let mut code = 0;
-    if let Some(targets) = report["targets"].as_array() {
-        for target in targets {
-            if let Some(outcomes) = target["report"]["outcomes"].as_array() {
-                for outcome in outcomes {
-                    match outcome["kind"].as_str().unwrap_or("infrastructure") {
-                        "infrastructure" => return 2,
-                        "campaign_cancelled" if !outcome["original"].is_null() => code = 1,
-                        "pass" | "reject" | "skip" | "campaign_cancelled" => (),
-                        _ => code = 1,
-                    }
-                }
-            }
-        }
-    }
-    code
 }

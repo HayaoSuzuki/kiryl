@@ -3,10 +3,10 @@ use serde_json::json;
 fn finding_reports_present_values_and_reproduction_commands() {
     let root = std::env::temp_dir().join(format!("kiryl-report-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("finding.bin");
+    let path = root.join("finding-0.bin");
     std::fs::write(
         &path,
-        br#"{"observation":{"rendered":"x=7","fingerprint":"assertion","replay_token":[1]}}"#,
+        br#"{"version":1,"test_id":"test_x","input":[],"observation":{"rendered":"x=7","fingerprint":"assertion","replay_token":[1]}}"#,
     )
     .unwrap();
     let mut report = json!({"outcomes":[{"original":path}]});
@@ -22,4 +22,30 @@ fn finding_reports_present_values_and_reproduction_commands() {
     assert_eq!(report["outcomes"][0]["minimize_command"][1], "minimize");
     assert_eq!(report["outcomes"][0]["replay_command"][5], "--best-effort");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn standalone_and_campaign_use_the_same_exit_rules() {
+    for (kind, expected) in [("pass", 0), ("failure", 1), ("infrastructure", 2)] {
+        let standalone = json!({"outcomes":[{"kind":kind}]});
+        let campaign = json!({"targets":[{"report":standalone}]});
+        assert_eq!(kiryl::report::exit_code(&standalone), expected);
+        assert_eq!(kiryl::report::exit_code(&campaign), expected);
+    }
+    assert_eq!(kiryl::report::exit_code(&json!({"interrupted":true})), 130);
+}
+
+#[test]
+fn cancellation_preserves_candidates_and_interruption_dominates_errors() {
+    let mut report = json!({"outcomes":[{"kind":"campaign_cancelled","original":null}]});
+    assert_eq!(kiryl::report::exit_code(&report), 0);
+    report["outcomes"][0]["original"] = json!("finding-0.bin");
+    assert_eq!(kiryl::report::exit_code(&report), 1);
+    report["outcomes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind":"infrastructure"}));
+    assert_eq!(kiryl::report::exit_code(&report), 2);
+    report["interrupted"] = json!(true);
+    assert_eq!(kiryl::report::exit_code(&report), 130);
 }

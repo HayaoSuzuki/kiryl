@@ -182,43 +182,8 @@ impl ArtifactStore {
     /// Validate and load an original before starting a replay worker.
     /// # Errors
     /// Rejects foreign, oversized, malformed or unsupported original records.
-    pub fn load_original(&self, original: &str) -> io::Result<serde_json::Value> {
-        let path = Path::new(original);
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| io::Error::other("invalid original path"))?;
-        if path.parent() != Some(self.root.as_path())
-            || name
-                .strip_prefix("finding-")
-                .and_then(|s| s.strip_suffix(".bin"))
-                .and_then(|s| s.parse::<u64>().ok())
-                .is_none()
-            || !fs::symlink_metadata(path)?.is_file()
-        {
-            return Err(io::Error::other(
-                "expected structured original in this store",
-            ));
-        }
-        let record: serde_json::Value = serde_json::from_slice(&read_bounded(path, 1024 * 1024)?)?;
-        let _test_id = record
-            .get("test_id")
-            .and_then(serde_json::Value::as_str)
-            .filter(|id| !id.is_empty() && id.len() <= 16 * 1024)
-            .ok_or_else(|| io::Error::other("invalid original test metadata"))?;
-        let input: Vec<u8> = serde_json::from_value(
-            record
-                .get("input")
-                .cloned()
-                .ok_or_else(|| io::Error::other("missing original input"))?,
-        )?;
-        if record.get("version").and_then(serde_json::Value::as_u64) != Some(1)
-            || input.len() > 4096
-            || record.get("observation").is_none()
-        {
-            return Err(io::Error::other("incompatible original record"));
-        }
-        Ok(record)
+    fn load_original(&self, original: &str) -> io::Result<serde_json::Value> {
+        read_original(&self.root, original)
     }
     /// Save exact active input before attempting verification or shrinking.
     /// # Errors
@@ -265,4 +230,200 @@ fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
         return Err(io::Error::other("artifact file exceeds limits"));
     }
     Ok(bytes)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayManifest {
+    version: u8,
+    identity: ReplayIdentity,
+}
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayIdentity {
+    target: String,
+    environment: serde_json::Value,
+}
+
+/// An admitted original and its reproduction context, holding exclusive campaign
+/// ownership until dropped. Callers need no manifest filenames or JSON paths.
+pub struct ReplayContext {
+    original: PathBuf,
+    directory: PathBuf,
+    identity: serde_json::Value,
+    environment: serde_json::Value,
+    selection: Vec<String>,
+    _campaign_lock: ArtifactStore,
+}
+impl ReplayContext {
+    /// Validate a saved original and acquire its campaign before collecting tests.
+    /// # Errors
+    /// Rejects unsupported formats, inconsistent target identities and active writers.
+    pub fn open(original: &Path) -> io::Result<Self> {
+        let original = fs::canonicalize(original)?;
+        let directory = original
+            .parent()
+            .ok_or_else(|| io::Error::other("finding has no store"))?
+            .to_owned();
+        let root = directory
+            .parent()
+            .ok_or_else(|| io::Error::other("missing campaign store"))?;
+        let campaign_lock = ArtifactStore::open(root)?;
+        let manifest: ReplayManifest = serde_json::from_slice(&read_bounded(
+            &directory.join("manifest.json"),
+            1024 * 1024,
+        )?)?;
+        if manifest.version != 1 {
+            return Err(io::Error::other("incompatible artifact schema"));
+        }
+        let selection = serde_json::from_value(manifest.identity.environment["selection"].clone())?;
+        let identity = serde_json::to_value(&manifest.identity)?;
+        let store = ArtifactStore::open_matching(&directory, &identity)?;
+        let record = store.load_original(
+            original
+                .to_str()
+                .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?,
+        )?;
+        if record["test_id"] != manifest.identity.target {
+            return Err(io::Error::other(
+                "finding target does not match store identity",
+            ));
+        }
+        drop(store);
+        Ok(Self {
+            original,
+            directory,
+            identity,
+            environment: manifest.identity.environment,
+            selection,
+            _campaign_lock: campaign_lock,
+        })
+    }
+    /// The pytest selection that originally established this finding's identity.
+    #[must_use]
+    pub fn selection(&self) -> &[String] {
+        &self.selection
+    }
+    /// Admit freshly collected source/dependency identity before worker execution.
+    /// # Errors
+    /// Returns a mismatch without changing any saved evidence.
+    pub fn check_environment(&self, current: &serde_json::Value) -> io::Result<()> {
+        if &self.environment != current {
+            return Err(io::Error::other(
+                "source, selection or environment mismatch",
+            ));
+        }
+        Ok(())
+    }
+    /// Original path stays valid within the locked reproduction namespace.
+    #[must_use]
+    pub fn original(&self) -> &Path {
+        &self.original
+    }
+    /// Namespace used by the executor for write-once derivative evidence.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+    /// Opaque comparison token; only storage interprets its representation.
+    #[must_use]
+    pub fn store_identity(&self) -> &serde_json::Value {
+        &self.identity
+    }
+}
+
+fn read_original(root: &Path, original: &str) -> io::Result<serde_json::Value> {
+    let path = Path::new(original);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("invalid original path"))?;
+    if path.parent() != Some(root)
+        || name
+            .strip_prefix("finding-")
+            .and_then(|s| s.strip_suffix(".bin"))
+            .and_then(|s| s.parse::<u64>().ok())
+            .is_none()
+        || !fs::symlink_metadata(path)?.is_file()
+    {
+        return Err(io::Error::other(
+            "expected structured original in this store",
+        ));
+    }
+    let record: serde_json::Value = serde_json::from_slice(&read_bounded(path, 1024 * 1024)?)?;
+    let _test_id = record
+        .get("test_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 16 * 1024)
+        .ok_or_else(|| io::Error::other("invalid original test metadata"))?;
+    let input: Vec<u8> = serde_json::from_value(
+        record
+            .get("input")
+            .cloned()
+            .ok_or_else(|| io::Error::other("missing original input"))?,
+    )?;
+    if record.get("version").and_then(serde_json::Value::as_u64) != Some(1)
+        || input.len() > 4096
+        || record.get("observation").is_none()
+    {
+        return Err(io::Error::other("incompatible original record"));
+    }
+    Ok(record)
+}
+
+/// Available finding values, independent of the persisted record layout.
+pub struct FindingDescription {
+    pub rendered: Option<String>,
+    pub fingerprint: Option<String>,
+    pub replayable: bool,
+}
+/// Read validated immutable evidence for user presentation without a writer lock.
+/// # Errors
+/// Rejects unsupported, foreign, malformed or oversized original records.
+pub fn describe_original(path: &Path) -> io::Result<FindingDescription> {
+    #[derive(serde::Deserialize)]
+    struct ObservationDescription {
+        rendered: Option<String>,
+        fingerprint: Option<String>,
+        replay_token: Option<Vec<u8>>,
+    }
+    let root = path
+        .parent()
+        .ok_or_else(|| io::Error::other("finding has no store"))?;
+    let record = read_original(
+        root,
+        path.to_str()
+            .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?,
+    )?;
+    let observation: ObservationDescription =
+        serde_json::from_value(record["observation"].clone())?;
+    Ok(FindingDescription {
+        rendered: observation.rendered,
+        fingerprint: observation.fingerprint,
+        replayable: observation.replay_token.is_some(),
+    })
+}
+
+/// Replay data admitted from storage; record envelopes remain storage-owned.
+#[derive(serde::Deserialize)]
+pub struct SavedFinding {
+    pub test_id: String,
+    pub input: Vec<u8>,
+    pub observation: FindingObservation,
+}
+/// Semantic failure evidence, independent of the original record's envelope.
+#[derive(serde::Deserialize)]
+pub struct FindingObservation {
+    pub kind: String,
+    pub fingerprint: Option<String>,
+    pub replay_token: Option<Vec<u8>>,
+    pub rendered: Option<String>,
+}
+impl ArtifactStore {
+    /// Return validated replay inputs without exposing the persistence layout.
+    /// # Errors
+    /// Rejects incompatible records or malformed semantic evidence.
+    pub fn load_finding(&self, original: &str) -> io::Result<SavedFinding> {
+        Ok(serde_json::from_value(self.load_original(original)?)?)
+    }
 }

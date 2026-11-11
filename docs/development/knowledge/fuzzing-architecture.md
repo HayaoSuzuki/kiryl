@@ -15,19 +15,23 @@ sources:
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
 - id: product-campaign
   resource: ../../../src/campaign.rs
-  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
+  working_tree: modified
+  sha256: c0d04a81edaba39d5ca6fed4b8fb5166d4dda4dee0237b3f51e7dae20f02191d
 - id: product-executor
   resource: ../../../src/executor.rs
-  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
+  working_tree: modified
+  sha256: 719f3918db95df4aed04e7c528ecaed2e3c2772d48af75fdbf6f404e86083843
 - id: product-store
   resource: ../../../src/artifacts.rs
-  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
+  working_tree: modified
+  sha256: 6c7e089cb13203ce8dd13483ad0f08f36352be5598cd0ed94b671f4e5beb0e0e
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
   revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
 - id: product-report
   resource: ../../../src/report.rs
-  revision: aad2e962bbeef3b1bc7fe99443c654f0be04cfb3
+  working_tree: modified
+  sha256: 326be6bfe821713368cb2d3b9d4c0ae45e7ad6de2a9b55199fd34b55f4338c09
 ---
 # Selected direction
 
@@ -155,3 +159,18 @@ successful product CLI execution on all six intended OS/interpreter cells and
 separate hard-resource gates at source revision `795fe6e`. Platform-specific
 skips do not stand in for required hard enforcement; those four jobs ran without
 best effort. The acceptance record owns the exact checks, limits and snapshots.
+
+# Storage and completion boundary refinement
+
+ReplayContext now owns manifest decoding, recorded selection, environment admission
+and campaign lock lifetime. Execution consumes typed SavedFinding evidence rather
+than the original envelope; presentation consumes FindingDescription. These
+boundaries allow storage representation changes without CLI, execution or display
+JSON-path edits.[^product-store][^product-executor][^product-report]
+
+Report owns Completion and shared exit/target-stop classification. CLI and campaign
+no longer repeat exit-status decisions. The [refactor review](../work/product-cli/boundary-refactor.md)
+records alternatives, five passes per phase and the independent scoped diagnostic
+assessment. CLI usage and version-1 storage encoding are unchanged, so user commands
+require no update. Revisit these boundaries if another consumer must decode stored
+JSON or invent its own completion precedence.[^product-report][^product-campaign]

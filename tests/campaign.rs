@@ -14,5 +14,5 @@ fn missing_target_state_is_not_admitted() {
 #[test]
 fn pending_active_cancellation_is_not_success() {
     let report = serde_json::json!({"targets":[{"report":{"outcomes":[{"kind":"campaign_cancelled","original":"finding-0.bin"}]}}]});
-    assert_eq!(kiryl::campaign::exit_code(&report), 1);
+    assert_eq!(kiryl::report::exit_code(&report), 1);
 }

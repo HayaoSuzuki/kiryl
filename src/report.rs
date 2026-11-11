@@ -1,10 +1,6 @@
 //! Finding presentation owns user-facing values and replay command construction.
 use serde_json::{Value, json};
-use std::{
-    fs::File,
-    io::{self, Read},
-    path::Path,
-};
+use std::{io, path::Path};
 
 /// Add available rendered values and argument arrays suitable for fresh operations.
 /// # Errors
@@ -44,18 +40,11 @@ fn annotate(
         let Some(path) = outcome["original"].as_str().map(str::to_owned) else {
             continue;
         };
-        let mut bytes = vec![];
-        File::open(&path)?
-            .take(1024 * 1024 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > 1024 * 1024 {
-            return Err(io::Error::other("original presentation exceeds limit"));
-        }
-        let original: Value = serde_json::from_slice(&bytes)?;
-        outcome["input_values"] = original["observation"]["rendered"].clone();
-        outcome["failure_fingerprint"] = original["observation"]["fingerprint"].clone();
+        let description = crate::artifacts::describe_original(Path::new(&path))?;
+        outcome["input_values"] = json!(description.rendered);
+        outcome["failure_fingerprint"] = json!(description.fingerprint);
         for command in ["replay", "minimize"] {
-            if command == "minimize" && original["observation"]["replay_token"].is_null() {
+            if command == "minimize" && !description.replayable {
                 continue;
             }
             let mut args = vec![
@@ -88,4 +77,73 @@ fn annotate(
         }
     }
     Ok(())
+}
+
+/// Completion severity is independent of report nesting and wire encoding.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Completion {
+    Clean,
+    Finding,
+    Infrastructure,
+    Interrupted,
+}
+impl Completion {
+    /// Preserve the strongest observed result; interruption has process priority.
+    #[must_use]
+    pub fn combine(self, other: Self) -> Self {
+        self.max(other)
+    }
+    /// Stable CLI exit contract shared by search and standalone operations.
+    #[must_use]
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Self::Clean => 0,
+            Self::Finding => 1,
+            Self::Infrastructure => 2,
+            Self::Interrupted => 130,
+        }
+    }
+}
+/// Classify a recorded observation without forgetting an unresolved active input.
+#[must_use]
+pub fn completion(kind: &str, has_original: bool) -> Completion {
+    match kind {
+        "infrastructure" => Completion::Infrastructure,
+        "campaign_cancelled" if has_original => Completion::Finding,
+        "pass" | "reject" | "skip" | "campaign_cancelled" => Completion::Clean,
+        _ => Completion::Finding,
+    }
+}
+/// A terminal target no longer receives slices; expiry alone does not stop it.
+#[must_use]
+pub fn stops_search(kind: &str) -> bool {
+    !matches!(kind, "pass" | "reject" | "campaign_cancelled")
+}
+/// Read either report shape through one outcome/exit contract.
+#[must_use]
+pub fn exit_code(report: &Value) -> i32 {
+    report_completion(report).exit_code()
+}
+fn report_completion(report: &Value) -> Completion {
+    if report["interrupted"] == true {
+        return Completion::Interrupted;
+    }
+    let mut result = Completion::Clean;
+    if report["status"] == "infrastructure" {
+        result = Completion::Infrastructure;
+    }
+    if let Some(outcomes) = report["outcomes"].as_array() {
+        for outcome in outcomes {
+            result = result.combine(completion(
+                outcome["kind"].as_str().unwrap_or("infrastructure"),
+                !outcome["original"].is_null(),
+            ));
+        }
+    }
+    if let Some(targets) = report["targets"].as_array() {
+        for target in targets {
+            result = result.combine(report_completion(&target["report"]));
+        }
+    }
+    result
 }

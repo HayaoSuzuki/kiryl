@@ -145,22 +145,6 @@ pub struct ExecutionReport {
     pub baseline_statistics: Value,
     pub operation_observation: Option<Observation>,
 }
-impl ExecutionReport {
-    #[must_use]
-    pub fn exit_code(&self) -> i32 {
-        if self.interrupted {
-            130
-        } else if self.outcomes.iter().any(|o| o.kind == "infrastructure") {
-            2
-        } else {
-            i32::from(
-                self.outcomes
-                    .iter()
-                    .any(|o| !["pass", "reject", "skip"].contains(&o.kind.as_str())),
-            )
-        }
-    }
-}
 
 /// Deterministic budget precedence shared by live supervision and model tests.
 #[must_use]
@@ -609,18 +593,13 @@ impl Executor {
         let mut store = ArtifactStore::open_matching(&config.output, &config.identity)
             .map_err(ExecutionError::Storage)?;
         let source = store
-            .load_original(original)
+            .load_finding(original)
             .map_err(ExecutionError::Storage)?;
         let mut invocation = Invocation {
-            test_id: source["test_id"]
-                .as_str()
-                .ok_or_else(|| io::Error::other("missing test ID"))?
-                .into(),
+            test_id: source.test_id.clone(),
             inputs: vec![],
         };
-        let token: Option<Vec<u8>> =
-            serde_json::from_value(source["observation"]["replay_token"].clone())
-                .map_err(io::Error::from)?;
+        let token = source.observation.replay_token.clone();
         let operation = if token.is_none() {
             if mode == "minimize" {
                 return Err(io::Error::other(
@@ -628,8 +607,7 @@ impl Executor {
                 )
                 .into());
             }
-            invocation.inputs =
-                vec![serde_json::from_value(source["input"].clone()).map_err(io::Error::from)?];
+            invocation.inputs = vec![source.input.clone()];
             "raw_replay"
         } else {
             mode
@@ -653,7 +631,7 @@ impl Executor {
             &mut None,
         )?;
         report.operation_observation.clone_from(&result.observation);
-        let expected = source["observation"]["fingerprint"].as_str();
+        let expected = source.observation.fingerprint.as_deref();
         let mut verification = "pending";
         let mut paths = vec![];
         if let Some(observation) = &result.observation {
@@ -668,9 +646,8 @@ impl Executor {
             } else if (observation.kind == "failure"
                 && observation.fingerprint.as_deref() == expected)
                 || (token.is_none()
-                    && observation.kind == source["observation"]["kind"]
-                    && observation.rendered.as_deref()
-                        == source["observation"]["rendered"].as_str())
+                    && observation.kind == source.observation.kind
+                    && observation.rendered.as_deref() == source.observation.rendered.as_deref())
             {
                 "confirmed"
             } else {
@@ -737,10 +714,7 @@ impl Executor {
         report.outcomes.push(Outcome {
             test_id: invocation.test_id,
             case_id: 0,
-            kind: source["observation"]["kind"]
-                .as_str()
-                .unwrap_or("failure")
-                .into(),
+            kind: source.observation.kind.clone(),
             original: Some(original.into()),
             derived: paths,
             verification: verification.into(),

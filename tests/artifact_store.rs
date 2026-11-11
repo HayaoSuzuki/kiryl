@@ -260,3 +260,49 @@ fn symlink_cannot_be_used_as_an_original() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn replay_context_owns_selection_identity_and_campaign_lock() {
+    let root = temporary_root("replay-context");
+    let environment = serde_json::json!({"selection":["test_x.py"],"python":"3.14"});
+    let mut store = ArtifactStore::open_matching(
+        &root.as_path().join("target-0"),
+        &serde_json::json!({"target":"test_x.py::test_x[a]","environment":environment}),
+    )
+    .unwrap();
+    let original = store
+        .record_original("test_x.py::test_x[a]", &[1], &serde_json::json!({}))
+        .unwrap();
+    drop(store);
+    let context = kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).unwrap();
+    assert_eq!(context.selection(), ["test_x.py"]);
+    assert!(context.check_environment(&environment).is_ok());
+    assert!(context.check_environment(&serde_json::json!({})).is_err());
+    assert!(ArtifactStore::open(root.as_path()).is_err());
+    drop(context);
+    drop(ArtifactStore::open(root.as_path()).unwrap());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn replay_admission_rejects_schema_and_variant_mismatch_without_changing_original() {
+    let root = temporary_root("replay-invalid");
+    let target = root.join("target-0");
+    let identity = serde_json::json!({"target":"test_x.py::test_x[a]","environment":{"selection":["test_x.py"]}});
+    let mut store = ArtifactStore::open_matching(&target, &identity).unwrap();
+    let original = store
+        .record_original("test_x.py::test_x[b]", &[1, 2], &serde_json::json!({}))
+        .unwrap();
+    drop(store);
+    let before = fs::read(&original).unwrap();
+    assert!(kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).is_err());
+    fs::write(
+        target.join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({"version":2,"identity":identity})).unwrap(),
+    )
+    .unwrap();
+    assert!(kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).is_err());
+    assert_eq!(fs::read(original).unwrap(), before);
+    drop(ArtifactStore::open(&root).unwrap());
+    fs::remove_dir_all(root).unwrap();
+}

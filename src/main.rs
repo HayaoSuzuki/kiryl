@@ -92,14 +92,17 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
             invalid("memory must be positive and retained output cannot exceed 16 MiB").into(),
         );
     }
-    if command != "run" && selection.is_empty() {
-        let path = PathBuf::from(finding.as_ref().ok_or_else(|| invalid("missing finding"))?);
-        let parent = path
-            .parent()
-            .ok_or_else(|| invalid("finding has no parent"))?;
-        let manifest: Value = serde_json::from_slice(&fs::read(parent.join("manifest.json"))?)?;
-        selection =
-            serde_json::from_value(manifest["identity"]["environment"]["selection"].clone())?;
+    let replay = if command == "run" {
+        None
+    } else {
+        Some(kiryl::artifacts::ReplayContext::open(Path::new(
+            finding.as_ref().ok_or_else(|| invalid("missing finding"))?,
+        ))?)
+    };
+    if selection.is_empty()
+        && let Some(context) = &replay
+    {
+        selection = context.selection().to_vec();
     }
     let flag = Arc::new(AtomicBool::new(false));
     let handler = Arc::clone(&flag);
@@ -163,20 +166,10 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
             &flag,
         )?
     } else {
-        let original = fs::canonicalize(finding.ok_or_else(|| invalid("missing finding"))?)?;
-        let directory = original
-            .parent()
-            .ok_or_else(|| invalid("finding has no parent"))?
-            .to_owned();
-        let _campaign_lock = kiryl::artifacts::ArtifactStore::open(
-            directory
-                .parent()
-                .ok_or_else(|| invalid("missing campaign store"))?,
-        )?;
-        let manifest: Value = serde_json::from_slice(&fs::read(directory.join("manifest.json"))?)?;
-        if manifest["identity"]["environment"] != identity {
-            return Err(invalid("source, selection or environment mismatch").into());
-        }
+        let replay = replay
+            .as_ref()
+            .ok_or_else(|| invalid("missing replay context"))?;
+        replay.check_environment(&identity)?;
         let config = ExecutorConfig {
             python,
             pytest_args: selection,
@@ -186,13 +179,14 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
             search: false,
             feedback: true,
             baseline: false,
-            output: directory,
-            identity: manifest["identity"].clone(),
+            output: replay.directory().to_owned(),
+            identity: replay.store_identity().clone(),
         };
         serde_json::to_value(
             Executor::new(flag).operation(
                 &config,
-                original
+                replay
+                    .original()
                     .to_str()
                     .ok_or_else(|| invalid("non UTF-8 finding path"))?,
                 &command,
@@ -220,18 +214,7 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
     } else {
         println!("{}", String::from_utf8(bytes)?);
     }
-    Ok(if command == "run" {
-        campaign::exit_code(&report)
-    } else if report["interrupted"] == true {
-        130
-    } else if report["outcomes"]
-        .as_array()
-        .is_some_and(|values| values.iter().any(|value| value["kind"] == "infrastructure"))
-    {
-        2
-    } else {
-        1
-    })
+    Ok(kiryl::report::exit_code(&report))
 }
 fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
