@@ -84,3 +84,36 @@ not accepted100% results. Native collection and the exact aggregate gate are the
 next evidence step. Two independent tool-review findings were fixed: omitted
 source files now fail inventory validation, and source-byte changes are detected
 independently of HEAD. Tooling unit tests themselves reach100% statements/branches.
+
+## Native feedback and second measurement
+
+The first native run at0cfe0b2 exposed a test-fixture race: prewritten worker frames
+could overrun the bounded command queue without consuming acknowledgments. All
+nonempty fake workers now consume actual length-framed commands. Windows strict
+Clippy also rejected the larger PreparedOperation layout; its admitted context is
+now boxed without changing lock lifetime. Linux3.15 produced usable coverage, but
+its ordinary job lacked cgroup delegation, leaving native attachment unmeasured.
+A shared dedicated-subtree launcher now serves both hard gates and coverage while
+running product commands as the ordinary runner. No shared ancestor is modified.
+
+Further tests cover filesystem-backed cgroup parsing/control failures, ownedWindows
+job/port events, malformed observations, storageIDexhaustion, report persistence,
+root locks, rejected raw minimization and presentation-time corruption. Guard and
+notification policies were extracted into testable private boundaries without
+backend traits, additional runtime flags, or coverage exclusions.
+
+The second fresh local collection passes298Rusttests and258Pythoncases with4native
+skips. RawLLVM totals are3189/3283lines(97.13676515382272%) and317/321functions;
+Python has2713/2774statements and374/374branches, with61Windows/LinuxCLItestlines
+unexecuted locally. This is still not an accepted100% result. FiftyLinuxpure/filesystem
+cases also passed against the exact source through a temporaryUnixharness, and both
+Linux/Windowscross-target strictClippy passed; nativeWindows execution is pending.
+
+Function gating now matches LLVM source-function semantics: generic instantiations
+share source coordinates while distinct same-line definitions retain their columns.
+It validates everyLCOVdefinition against JSONmetadata before merging. The measured
+localfunction count matched LLVM's own summary exactly; instantiation/region rates
+remain separate and are not claimed as100%. Independentreview rechecked source
+inventory, snapshot checks, quoting and delegation ownership without finding a
+Critical/Important issue. Cleanup may emit an additional diagnostic if setup fails
+before the controller exists; this is fail-closed and is not a coverage exclusion.

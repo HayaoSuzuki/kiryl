@@ -22,10 +22,10 @@ fn milliseconds(value: &str) -> io::Result<u64> {
     if !seconds.is_finite() || seconds < 0.001 || seconds > 1e12 {
         return Err(invalid("duration must be finite and positive"));
     }
-    std::time::Duration::from_secs_f64(seconds)
-        .as_millis()
-        .try_into()
-        .map_err(|_| invalid("duration too large"))
+    let duration = std::time::Duration::from_secs_f64(seconds);
+    // The validated upper bound is 10^12 seconds, so this is at most 10^15
+    // milliseconds. Preserve Duration's rounding without an impossible overflow arm.
+    Ok(duration.as_secs() * 1000 + u64::from(duration.subsec_millis()))
 }
 #[allow(clippy::too_many_lines)] // Single CLI dispatch; worker and campaign semantics remain encapsulated.
 fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
@@ -149,11 +149,22 @@ fn main() {
 mod tests {
     use super::milliseconds;
     #[rstest::rstest]
-    fn reject_durations_below_clock_resolution(#[values("0.00001", "NaN", "-1")] input: &str) {
+    fn reject_invalid_duration(
+        #[values("0.00001", "NaN", "-1", "invalid", "1000000000001")] input: &str,
+    ) {
         assert!(milliseconds(input).is_err());
     }
-    #[test]
-    fn accept_duration_at_clock_resolution() {
-        assert_eq!(milliseconds("0.001").unwrap(), 1);
+    #[rstest::rstest]
+    #[case::minimum("0.001", 1)]
+    #[case::maximum("1000000000000", 1_000_000_000_000_000)]
+    fn accept_duration_at_bounds(#[case] input: &str, #[case] expected: u64) {
+        assert_eq!(milliseconds(input).unwrap(), expected);
+    }
+    proptest::proptest! {
+        #[test]
+        fn decimal_milliseconds_round_trip(value in 1u64..=1_000_000_000) {
+            let text = format!("{}.{:03}", value / 1000, value % 1000);
+            proptest::prop_assert_eq!(milliseconds(&text).unwrap(), value);
+        }
     }
 }

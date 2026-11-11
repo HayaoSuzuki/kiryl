@@ -98,6 +98,49 @@ def rust_counts(paths: list[Path]) -> Metrics:
     return result
 
 
+def lcov_definitions(path: Path) -> set[tuple[str, int, str]]:
+    """Keep every raw LCOV definition for JSON correspondence validation."""
+    definitions: set[tuple[str, int, str]] = set()
+    filename = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        tag, _, value = line.partition(":")
+        if tag == "SF":
+            filename = source_name(value)
+        elif tag == "FN":
+            number, name = value.split(",", 1)
+            definitions.add((filename, int(number), name))
+    return definitions
+
+
+def rust_function_counts(paths: list[Path]) -> dict[str, dict[str, int]]:
+    """Merge LLVM source definitions, retaining columns and zero-hit functions."""
+    result: dict[str, dict[str, int]] = {}
+    for path in paths:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        definitions: set[tuple[str, int, str]] = set()
+        for data in report["data"]:
+            scoped_files = {item["filename"].replace("\\", "/") for item in data["files"]}
+            for function in data["functions"]:
+                regions = function["regions"]
+                if not regions:
+                    message = "LLVM function lacks a source definition region"
+                    raise ValueError(message)
+                first = regions[0]
+                filename = function["filenames"][first[5]].replace("\\", "/")
+                if filename not in scoped_files:
+                    continue
+                source = source_name(filename)
+                definitions.add((source, first[0], function["name"]))
+                location = f"{first[0]}:{first[1]}-{first[2]}:{first[3]}"
+                entries = result.setdefault(source, {})
+                entries[location] = entries.get(location, 0) + hit_count(str(function["count"]))
+        absent = lcov_definitions(path.with_suffix(".lcov")) - definitions
+        if absent:
+            message = f"LCOV functions lack JSON definition metadata: {sorted(absent)}"
+            raise ValueError(message)
+    return result
+
+
 def python_counts(paths: list[Path]) -> Metrics:
     """Union executable statements and branch arcs using exact hit presence."""
     result: Metrics = {}
@@ -154,7 +197,7 @@ def report_directories(directory: Path) -> list[Path]:
             raise ValueError(msg)
         cells.add(cell)
         snapshots.append((metadata.get("source_hashes"), metadata.get("dirty")))
-        if not (report / "rust.lcov").is_file() or not (report / "python.json").is_file():
+        if not all((report / name).is_file() for name in ("rust.lcov", "rust.json", "python.json")):
             msg = f"incomplete native coverage report: {report}"
             raise ValueError(msg)
     if len(revisions) != 1:
@@ -167,8 +210,14 @@ def report_directories(directory: Path) -> list[Path]:
             f"unexpected={sorted(cells - expected)}"
         )
         raise ValueError(msg)
-    discovered = set(directory.rglob("rust.lcov")) | set(directory.rglob("python.json"))
-    paired = {report / name for report in directories for name in ("rust.lcov", "python.json")}
+    discovered = set().union(
+        *(directory.rglob(name) for name in ("rust.lcov", "rust.json", "python.json"))
+    )
+    paired = {
+        report / name
+        for report in directories
+        for name in ("rust.lcov", "rust.json", "python.json")
+    }
     if discovered != paired:
         msg = "coverage reports without matching revision metadata are forbidden"
         raise ValueError(msg)
@@ -230,6 +279,9 @@ def main() -> None:
     try:
         directories = report_directories(arguments.directory)
         rust = rust_counts([path / "rust.lcov" for path in directories])
+        functions = rust_function_counts([path / "rust.json" for path in directories])
+        for source, metrics in rust.items():
+            metrics["functions"] = functions.get(source, {})
         python = python_counts([path / "python.json" for path in directories])
         validate_counts(rust, python)
         validate_inventory(rust, python)

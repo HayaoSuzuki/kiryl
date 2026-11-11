@@ -109,3 +109,56 @@ entry point is exempt only while its contents consist entirely of comments and
 module declarations; a test proves executable content removes that exception.
 All product adapter and test files remain in coverage scope. The two new tools
 are included explicitly in the reporting scope; no coverage exclusions were added.
+
+The Rust function gate now follows LLVM's source-function metric rather than
+requiring every generic instantiation to execute. LCOV names identify individual
+monomorphizations, so a zero-hit `ChildStdin` instance must not fail a source
+function already executed through `Vec<u8>`. Conversely, functions sharing a
+line remain distinct when their definition columns differ.
+
+The gate merges LLVM JSON function counts by source file and the first region's
+start/end line and column. Every raw LCOV function definition must have matching
+JSON metadata in its native cell; missing JSON cannot silently remove zero-hit
+functions. LCOV executable-line merging remains unchanged. Each native cell now
+requires both Rust JSON and LCOV reports. Dependency macro definitions remain
+outside the files explicitly exported by LLVM's existing product scope.
+
+Three regression tests were observed failing before implementation: distinct
+same-line functions, shared generic source definitions, and missing JSON metadata.
+The final tooling run passes 63 cases, with both scripts and their test file at
+100 percent statements and branches. Strict Ruff and ty checks pass. For the
+recorded macOS baseline, the new computation yields 311 source functions and 23
+unexecuted functions, matching LLVM's own total of 311 functions and 288 covered.
+The collector also passes `--include-ignored` to the Rust test harness so ignored
+test bodies participate in the requested coverage measurement.
+
+Windows backend test review comprised five distinct passes by the implementing
+agent; these do not represent five independent reviewers.
+
+1. Ownership review: every valid job and completion port is freshly created and
+   closed once. Error tests pass live owned handles of the wrong object type,
+   and never query, assign or terminate another process. Child fixtures launch
+   a trusted blocked `cmd.exe` and always attempt kill/wait during cleanup.
+2. Evidence review: explicit notification IDs and an arbitrary-u32 property
+   accept only `JOB_OBJECT_MSG_JOB_MEMORY_LIMIT` as job-memory evidence. Tests
+   retain previously observed evidence across later notifications and an empty
+   queue, while query errors remain errors even with prior evidence. These are
+   decoder tests, not proof of actual OOM enforcement or reliable delivery.
+3. Configuration review: a real owned child is assigned, the configured job
+   flags and aggregate memory limit are queried, then the tree is terminated.
+   Zero memory and an already exited child exercise failed attachment. Fixed
+   information-structure sizes now use compile-time DWORD-fit assertions; the
+   unreachable runtime size-conversion error factories were removed without
+   changing supported ABI values or limits.
+4. Structure review: each parameterized invocation is one case. No test body
+   contains explicit `if`, `for`, `while`, `loop` or `match` expressions. Repeated
+   observation/termination calls test one owned object's state transitions.
+   No generic API-mocking layer, production dependencies or Windows features
+   were added.
+5. Verification review: `cargo clippy --locked --target
+   x86_64-pc-windows-gnu --all-targets --all-features -- -D warnings`, formatting
+   and diff checks pass. The macOS host cannot execute these Windows tests;
+   native runtime and coverage results remain pending CI. In particular, the
+   defensive 500 ms termination deadline cannot be forced deterministically
+   through a normally functioning owned Windows job; it is not excluded or
+   claimed covered by these tests.

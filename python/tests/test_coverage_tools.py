@@ -70,7 +70,7 @@ def matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             ),
             encoding="utf-8",
         )
-        (directory / "rust.lcov").write_text(LCOV, encoding="utf-8")
+        write_rust_function_report(directory, [function_record("main", 1, 1)], LCOV)
         (directory / "python.json").write_text(json.dumps(python_report), encoding="utf-8")
     return tmp_path
 
@@ -198,7 +198,7 @@ def test_invalid_native_metadata_is_rejected(
         report_coverage.report_directories(matrix)
 
 
-@pytest.mark.parametrize("name", ["rust.lcov", "python.json"])
+@pytest.mark.parametrize("name", ["rust.lcov", "rust.json", "python.json"])
 def test_missing_native_report_is_rejected(matrix: Path, name: str) -> None:
     """A cell requires both language reports."""
     (matrix / "linux-3.14" / name).unlink()
@@ -346,6 +346,7 @@ def test_collector_orchestrates_instrumented_commands(
         Path(environment["KIRYL_BINARY"]).name == {"linux": "kiryl", "win32": "kiryl.exe"}[platform]
     )
     assert collector.calls[0][0] == ["cargo", "llvm-cov", "clean", "--workspace"]
+    assert collector.calls[1][0][-2:] == ["--", "--include-ignored"]
     assert collector.calls[-1][0][-3:] == ["--lcov", "--output-path", str(output / "rust.lcov")]
     assert json.loads((output / "native.json").read_text(encoding="utf-8")) == {
         "platform": platform,
@@ -499,3 +500,76 @@ def test_collector_rejects_dirty_source_mutation(
     with pytest.raises(SystemExit, match="revision changed"):
         run_coverage.main()
     assert not (output / "native.json").exists()
+
+
+def write_rust_function_report(
+    directory: Path, functions: list[dict[str, object]], lcov: str
+) -> Path:
+    """Write paired LLVM and LCOV metadata for one native report."""
+    report = directory / "rust.json"
+    report.write_text(
+        json.dumps({"data": [{"files": [{"filename": "src/main.rs"}], "functions": functions}]}),
+        encoding="utf-8",
+    )
+    report.with_suffix(".lcov").write_text(lcov, encoding="utf-8")
+    return report
+
+
+def function_record(name: str, column: int, count: int) -> dict[str, object]:
+    """Describe a source function using LLVM's definition range."""
+    return {
+        "name": name,
+        "count": count,
+        "filenames": ["src/main.rs"],
+        "regions": [[1, column, 1, column + 3, count, 0, 0, 0]],
+    }
+
+
+def test_source_functions_keep_distinct_columns(tmp_path: Path) -> None:
+    """Different functions on the same line retain their individual zero hits."""
+    functions = [function_record("first", 1, 1), function_record("second", 7, 0)]
+    report = write_rust_function_report(
+        tmp_path,
+        functions,
+        "SF:src/main.rs\nFN:1,first\nFN:1,second\nFNDA:1,first\nFNDA:0,second\nDA:1,1\nend_of_record\n",
+    )
+    assert report_coverage.rust_function_counts([report]) == {
+        "src/main.rs": {"1:1-1:4": 1, "1:7-1:10": 0}
+    }
+
+
+def test_generic_instantiations_share_source_function(tmp_path: Path) -> None:
+    """An executed source definition covers that function across native instantiations."""
+    functions = [function_record("generic_u8", 1, 1), function_record("generic_u16", 1, 0)]
+    report = write_rust_function_report(
+        tmp_path,
+        functions,
+        "SF:src/main.rs\nFN:1,generic_u8\nFN:1,generic_u16\nFNDA:1,generic_u8\nFNDA:0,generic_u16\nDA:1,1\nend_of_record\n",
+    )
+    assert report_coverage.rust_function_counts([report]) == {"src/main.rs": {"1:1-1:4": 1}}
+
+
+def test_lcov_function_requires_json_definition(tmp_path: Path) -> None:
+    """Missing JSON metadata cannot silently drop a raw LCOV function."""
+    report = write_rust_function_report(tmp_path, [], LCOV)
+    with pytest.raises(ValueError, match="lack JSON definition"):
+        report_coverage.rust_function_counts([report])
+
+
+def test_unscoped_llvm_function_does_not_enter_product_metrics(tmp_path: Path) -> None:
+    """Dependency-generated macro functions remain outside the exported file scope."""
+    function = function_record("external", 1, 0)
+    function["filenames"] = ["/dependency/source.rs"]
+    report = write_rust_function_report(
+        tmp_path, [function], "SF:src/main.rs\nDA:1,1\nend_of_record\n"
+    )
+    assert report_coverage.rust_function_counts([report]) == {}
+
+
+def test_llvm_function_requires_definition_region(tmp_path: Path) -> None:
+    """An absent definition range cannot drop a function from the gate."""
+    function = function_record("main", 1, 0)
+    function["regions"] = []
+    report = write_rust_function_report(tmp_path, [function], LCOV)
+    with pytest.raises(ValueError, match="lacks a source definition region"):
+        report_coverage.rust_function_counts([report])

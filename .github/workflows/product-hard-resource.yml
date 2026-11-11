@@ -48,34 +48,14 @@ jobs:
           mkdir -p "$evidence"
           cat /proc/self/cgroup > "$evidence/controller-membership-before.txt"
           cat /proc/self/mountinfo > "$evidence/mountinfo.txt"
-          # Do not enable controllers on a shared ancestor. This dedicated gate
-          # requires a writable unified mount already distributing memory.
-          cgroup_mount=$(findmnt -n -t cgroup2 -o TARGET)
-          test -n "$cgroup_mount"
-          test -f "$cgroup_mount/cgroup.subtree_control"
-          test "$(wc -l <<< "$cgroup_mount")" -eq 1
-          if ! tr ' ' '\n' < "$cgroup_mount/cgroup.subtree_control" | grep -qx memory; then
-            echo 'Shared cgroup root does not distribute memory; required hard gate failed' >&2
-            exit 1
-          fi
-          delegated="$cgroup_mount/kiryl-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
-          sudo mkdir "$delegated"
-          cleanup() {
-            sudo rmdir "$delegated/controller" "$delegated"
-          }
-          trap cleanup EXIT
-          echo +memory | sudo tee "$delegated/cgroup.subtree_control" >/dev/null
-          if [[ -f "$delegated/memory.swap.max" ]]; then
-            echo 0 | sudo tee "$delegated/memory.swap.max" >/dev/null
-          fi
-          sudo mkdir "$delegated/controller"
-          sudo --preserve-env=LD_LIBRARY_PATH bash -c '
-            set -euo pipefail
-            echo $$ > "$1/controller/cgroup.procs"
-            cat /proc/self/cgroup > "$5/controller-membership-running.txt"
-            export KIRYL_CGROUP_PARENT="$1"
-            exec "$2" "$3" --binary "$4" --python "$2" --evidence "$5"
-          ' bash "$delegated" "$product_python" "$PWD/docs/development/work/product-cli/evidence/hard-resource-run.py" "$PWD/target/debug/kiryl" "$evidence"
+          # Variables below belong to the delegated inner shell.
+          # shellcheck disable=SC2016
+          tools/with-delegated-cgroup.sh bash -c '
+            evidence=$1
+            shift
+            cat /proc/self/cgroup > "$evidence/controller-membership-running.txt"
+            exec "$@"
+          ' bash "$evidence" "$product_python" "$PWD/docs/development/work/product-cli/evidence/hard-resource-run.py" --binary "$PWD/target/debug/kiryl" --python "$product_python" --evidence "$evidence"
       - name: Retain hard-gate observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

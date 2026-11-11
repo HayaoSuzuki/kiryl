@@ -30,7 +30,7 @@ impl Operation {
 enum PreparedOperation {
     Run,
     Reproduce {
-        context: ReplayContext,
+        context: Box<ReplayContext>,
         kind: Reproduction,
     },
 }
@@ -80,11 +80,11 @@ pub fn execute(
     let operation = match operation {
         Operation::Run => PreparedOperation::Run,
         Operation::Replay(path) => PreparedOperation::Reproduce {
-            context: ReplayContext::open(&path)?,
+            context: Box::new(ReplayContext::open(&path)?),
             kind: Reproduction::Replay,
         },
         Operation::Minimize(path) => PreparedOperation::Reproduce {
-            context: ReplayContext::open(&path)?,
+            context: Box::new(ReplayContext::open(&path)?),
             kind: Reproduction::Minimize,
         },
     };

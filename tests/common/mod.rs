@@ -23,11 +23,6 @@ impl std::ops::Deref for TemporaryRoot {
         &self.0
     }
 }
-impl AsRef<Path> for TemporaryRoot {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
 impl Drop for TemporaryRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

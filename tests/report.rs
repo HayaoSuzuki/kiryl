@@ -4,7 +4,7 @@ use serde_json::json;
 #[test]
 fn finding_reports_present_values_and_reproduction_commands() {
     let root = common::TemporaryRoot::new("report");
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&*root).unwrap();
     let path = root.join("finding-0.bin");
     std::fs::write(
         &path,
@@ -77,7 +77,7 @@ proptest! {
 #[test]
 fn publication_replaces_complete_reports() {
     let root = common::TemporaryRoot::new("publication");
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&*root).unwrap();
     let path = root.join("report.json");
     std::fs::write(&path, b"stale").unwrap();
     kiryl::report::publish_output(Some(&path), &json!({"complete":true})).unwrap();

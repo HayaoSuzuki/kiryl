@@ -54,6 +54,7 @@ def source_snapshot(root: Path) -> dict[str, str]:
     for name in (
         "tools/run_coverage.py",
         "tools/report_coverage.py",
+        "tools/with-delegated-cgroup.sh",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
@@ -116,7 +117,10 @@ def main() -> None:
     )
     environment.update(parse_exports(exports))
     execute(["cargo", "llvm-cov", "clean", "--workspace"], environment=environment)
-    execute(["cargo", "test", "--locked", "--workspace", "--all-features"], environment=environment)
+    execute(
+        ["cargo", "test", "--locked", "--workspace", "--all-features", "--", "--include-ignored"],
+        environment=environment,
+    )
     execute(["cargo", "build", "--locked"], environment=environment)
     environment["KIRYL_BINARY"] = str(
         ROOT / "target/coverage/debug" / ("kiryl.exe" if sys.platform == "win32" else "kiryl")

@@ -52,12 +52,8 @@ impl Group {
             let pid = i32::try_from(self.pid).map_err(io::Error::other)?;
             // SAFETY: worker owns this group and remains unreaped until cleanup;
             // the live anchor preserves signaling authority even after worker exit.
-            if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(error);
-                }
-            }
+            let failed = unsafe { libc::kill(-pid, libc::SIGKILL) } != 0;
+            signal_result(failed.then(io::Error::last_os_error))?;
         }
         #[cfg(not(unix))]
         {
@@ -65,11 +61,21 @@ impl Group {
         }
         if let Some(mut anchor) = self.anchor.take() {
             let _ = anchor.kill();
-            anchor.wait()?;
+            return anchor.wait().map(|_| ());
         }
         Ok(())
     }
 }
+// A vanished owned group needs no further signal. Other OS errors must remain
+// visible so the supervisor cannot mistake failed cleanup for successful teardown.
+#[cfg(unix)]
+fn signal_result(error: Option<io::Error>) -> io::Result<()> {
+    match error {
+        Some(error) if error.raw_os_error() != Some(libc::ESRCH) => Err(error),
+        _ => Ok(()),
+    }
+}
+
 impl Drop for Group {
     fn drop(&mut self) {
         // Never retry a numeric group signal; owned child handles remain safe.
@@ -131,5 +137,33 @@ mod tests {
             io::Error::last_os_error().raw_os_error(),
             Some(libc::ECHILD)
         );
+    }
+    #[rstest::rstest]
+    #[case::no_error(None, true)]
+    #[case::already_gone(Some(libc::ESRCH), true)]
+    #[case::permission_failure(Some(libc::EPERM), false)]
+    fn group_signal_policy_preserves_unexpected_errors(
+        #[case] error: Option<i32>,
+        #[case] success: bool,
+    ) {
+        assert_eq!(
+            signal_result(error.map(io::Error::from_raw_os_error)).is_ok(),
+            success
+        );
+    }
+    #[test]
+    fn an_owned_live_group_can_be_cleaned_without_an_anchor() {
+        let worker = worker();
+        assert!(Group::new(worker.0.id(), "test".into()).terminate().is_ok());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::Group;
+    #[test]
+    fn unsupported_group_cleanup_defers_to_the_owned_process_handle() {
+        let mut group = Group::attach(0, "no group signaling backend".into()).unwrap();
+        assert!(group.terminate().is_ok());
     }
 }

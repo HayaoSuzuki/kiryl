@@ -6,12 +6,11 @@ status: draft
 sources:
 - id: plan
   resource: ../work/product-cli/test-coverage-plan.md
-  working_tree: untracked
-  sha256: f3f36cda0a772237cb92eb3163a7808d429c7a13c746bfbfb0c9604bad96de9c
+  working_tree: modified
+  sha256: 1e146075c9eb012781d7e59bf51cf80e8da50d60c89e7c46cc3aff2a8b28f329
 - id: manifest
   resource: ../../../Cargo.toml
-  working_tree: modified
-  sha256: 38cf14593090811554511f0e847d34adc2b151b719b8ec9cf4366999d88d9624
+  revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
 ---
 # Test contract
 

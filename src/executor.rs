@@ -164,6 +164,23 @@ pub struct ExecutionReport {
     pub operation_observation: Option<Observation>,
 }
 
+impl ExecutionReport {
+    // Cleanup diagnostics must not replace evidence already retained for a case.
+    fn record_cleanup_failure(&mut self, target: &str, error: Option<&str>) {
+        if let Some(error) = error {
+            self.outcomes.push(Outcome {
+                test_id: target.into(),
+                case_id: 0,
+                kind: "infrastructure".into(),
+                original: None,
+                derived: vec![],
+                verification: format!("cleanup failed: {error}"),
+                detail: None,
+            });
+        }
+    }
+}
+
 /// Deterministic budget precedence shared by live supervision and model tests.
 #[must_use]
 pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<&'static str> {
@@ -176,6 +193,12 @@ pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<&'static 
     } else {
         None
     }
+}
+
+// A piped Command requests these handles; preserve a precise infrastructure
+// diagnostic if a caller ever supplies a child without a required pipe.
+fn required_pipe<T>(pipe: Option<T>, diagnostic: &'static str) -> io::Result<T> {
+    pipe.ok_or_else(|| io::Error::other(diagnostic))
 }
 
 struct Worker {
@@ -219,18 +242,9 @@ impl Worker {
                     return Err(error);
                 }
             };
-        let mut input = child
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::other("missing stdin"))?;
-        let mut output = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("missing stdout"))?;
-        let mut errors = child
-            .stderr
-            .take()
-            .ok_or_else(|| io::Error::other("missing stderr"))?;
+        let mut input = required_pipe(child.stdin.take(), "missing stdin")?;
+        let mut output = required_pipe(child.stdout.take(), "missing stdout")?;
+        let mut errors = required_pipe(child.stderr.take(), "missing stderr")?;
         let (send, events) = mpsc::sync_channel(4);
         let writer_events = send.clone();
         let (commands, pending) = mpsc::sync_channel(2);
@@ -399,7 +413,7 @@ impl Executor {
                 .outcomes
                 .iter()
                 .rposition(|o| o.original == result.original && o.kind == observed.kind)
-                .unwrap_or_else(|| report.outcomes.len().saturating_sub(1));
+                .unwrap_or(report.outcomes.len().saturating_sub(1));
             if observed.kind == "failure"
                 && let (Some(token), Some(original)) = (&observed.replay_token, &result.original)
                 && !self.cancelled(&config, start)
@@ -700,20 +714,9 @@ impl Executor {
             }
             if active.is_some() && resource_check.elapsed() >= Duration::from_millis(20) {
                 resource_check = Instant::now();
-                match worker.resource.oom_observed() {
-                    Ok(true) => {
-                        observed = Some(Observation {
-                            kind: "oom".into(),
-                            verification: "pending".into(),
-                            ..Observation::default()
-                        });
-                        break;
-                    }
-                    Ok(false) => (),
-                    Err(error) => {
-                        observed = Some(infrastructure(&format!("resource evidence: {error}")));
-                        break;
-                    }
+                if let Some(observation) = resource_observation(worker.resource.oom_observed()) {
+                    observed = Some(observation);
+                    break;
                 }
             }
             if let Some(error) = worker.send_error.take() {
@@ -1033,17 +1036,7 @@ impl Executor {
                 });
             }
         }
-        if let Some(error) = &worker.cleanup_error {
-            report.outcomes.push(Outcome {
-                test_id: invocation.test_id.clone(),
-                case_id: 0,
-                kind: "infrastructure".into(),
-                original: None,
-                derived: vec![],
-                verification: format!("cleanup failed: {error}"),
-                detail: None,
-            });
-        }
+        report.record_cleanup_failure(&invocation.test_id, worker.cleanup_error.as_deref());
         Ok(RunResult {
             observation: observed,
             original,
@@ -1130,6 +1123,20 @@ fn decode_unix_exit(code: i32, value: i32) -> io::Result<std::process::ExitStatu
     Ok(std::process::ExitStatus::from_raw(raw))
 }
 
+// Absence of OOM evidence keeps the case active; failure to read evidence is
+// infrastructure, rather than a claim that the application exceeded its limit.
+fn resource_observation(evidence: io::Result<bool>) -> Option<Observation> {
+    match evidence {
+        Ok(false) => None,
+        Ok(true) => Some(Observation {
+            kind: "oom".into(),
+            verification: "pending".into(),
+            ..Observation::default()
+        }),
+        Err(error) => Some(infrastructure(&format!("resource evidence: {error}"))),
+    }
+}
+
 fn infrastructure(message: &str) -> Observation {
     Observation {
         kind: "infrastructure".into(),
@@ -1184,6 +1191,25 @@ impl Discovery {
     }
 }
 
+// Collection output is bounded and decoded only once its reader finishes;
+// timeout leaves supervision active, while loss of the reader is infrastructure.
+fn collection_event(
+    event: Result<io::Result<Vec<u8>>, mpsc::RecvTimeoutError>,
+) -> std::ops::ControlFlow<io::Result<Discovery>> {
+    let result = match event {
+        Ok(Ok(bytes)) if bytes.len() <= 8 * 1024 * 1024 => {
+            serde_json::from_slice(&bytes).map_err(io::Error::from)
+        }
+        Ok(Ok(_)) => Err(io::Error::other("collection output exceeds limit")),
+        Ok(Err(error)) => Err(error),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(io::Error::other("collection output disconnected"))
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => return std::ops::ControlFlow::Continue(()),
+    };
+    std::ops::ControlFlow::Break(result)
+}
+
 /// Collect through a resource-attached child with bounded retained output.
 /// # Errors
 /// Returns collection errors, deadlines and unavailable hard containment.
@@ -1213,14 +1239,8 @@ pub(crate) fn collect(
             return Err(error);
         }
     };
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("missing collection stdout"))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| io::Error::other("missing collection stderr"))?;
+    let stdout = required_pipe(child.stdout.take(), "missing collection stdout")?;
+    let mut stderr = required_pipe(child.stderr.take(), "missing collection stderr")?;
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut bytes = vec![];
@@ -1243,11 +1263,7 @@ pub(crate) fn collect(
         }
         let _ = log_complete.send(());
     });
-    child
-        .stdin
-        .take()
-        .ok_or_else(|| io::Error::other("missing collection stdin"))?
-        .write_all(b"g")?;
+    required_pipe(child.stdin.take(), "missing collection stdin")?.write_all(b"g")?;
     let start = Instant::now();
     let result = loop {
         if interrupted.load(Ordering::Relaxed)
@@ -1264,16 +1280,10 @@ pub(crate) fn collect(
                 "collection interrupted or campaign budget exhausted",
             ));
         }
-        match receiver.recv_timeout(Duration::from_millis(10)) {
-            Ok(Ok(bytes)) if bytes.len() <= 8 * 1024 * 1024 => {
-                break serde_json::from_slice(&bytes).map_err(io::Error::from);
-            }
-            Ok(Ok(_)) => break Err(io::Error::other("collection output exceeds limit")),
-            Ok(Err(error)) => break Err(error),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break Err(io::Error::other("collection output disconnected"));
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => (),
+        if let std::ops::ControlFlow::Break(result) =
+            collection_event(receiver.recv_timeout(Duration::from_millis(10)))
+        {
+            break result;
         }
     };
     guard.terminate_tree()?;
@@ -1322,11 +1332,15 @@ mod tests {
                 .unwrap();
             std::fs::write(&frame_path, bytes).unwrap();
             let python = root.join("worker");
-            std::fs::write(
-                &python,
-                format!("#!/bin/sh\ncat '{}'\nsleep 60\n", frame_path.display()),
-            )
-            .unwrap();
+            let script = if frames.is_empty() {
+                format!("#!/bin/sh\ncat '{}'\nsleep 60\n", frame_path.display())
+            } else {
+                format!(
+                    "#!/bin/sh\n{}",
+                    Self::command_script(&root, "default", frames)
+                )
+            };
+            std::fs::write(&python, script).unwrap();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -1347,23 +1361,33 @@ mod tests {
             };
             Self { root, config }
         }
-        fn sequenced(sessions: &[Vec<Value>]) -> Self {
+        fn command_script(root: &std::path::Path, label: &str, frames: &[Value]) -> String {
             use std::fmt::Write as _;
+            let mut script = String::from(
+                "read_command() {\nset -- $(dd bs=1 count=4 2>/dev/null | od -An -tu1)\nlength=$(( $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 ))\ndd bs=1 count=\"$length\" of=/dev/null 2>/dev/null\n}\n",
+            );
+            frames.iter().enumerate().for_each(|(frame_index, frame)| {
+                let path = root.join(format!("frame-{label}-{frame_index}"));
+                let mut bytes = Vec::new();
+                wire::write(&mut bytes, frame.clone()).unwrap();
+                std::fs::write(&path, bytes).unwrap();
+                writeln!(script, "cat '{}'", path.display()).unwrap();
+                if matches!(
+                    frame["kind"].as_str(),
+                    Some("ready" | "next" | "replay_case" | "candidate" | "result" | "skipped")
+                ) {
+                    script.push_str("read_command\n");
+                }
+            });
+            script.push_str("sleep 60\n");
+            script
+        }
+        fn sequenced(sessions: &[Vec<Value>]) -> Self {
             let fixture = Self::new(&[]);
             sessions.iter().enumerate().for_each(|(index, frames)| {
-                let mut script = String::from("read_command() {\nset -- $(dd bs=1 count=4 2>/dev/null | od -An -tu1)\nlength=$(( $1 * 16777216 + $2 * 65536 + $3 * 256 + $4 ))\ndd bs=1 count=\"$length\" of=/dev/null 2>/dev/null\n}\n");
-                frames.iter().enumerate().for_each(|(frame_index, frame)| {
-                    let path = fixture.root.join(format!("frame-{}-{frame_index}", index + 1));
-                    let mut bytes = Vec::new();
-                    wire::write(&mut bytes, frame.clone()).unwrap();
-                    std::fs::write(&path, bytes).unwrap();
-                    writeln!(script, "cat '{}'", path.display()).unwrap();
-                    if matches!(frame["kind"].as_str(), Some("ready" | "next" | "replay_case" | "candidate" | "result" | "skipped")) {
-                        script.push_str("read_command\n");
-                    }
-                });
-                script.push_str("sleep 60\n");
-                std::fs::write(fixture.root.join(format!("session-{}", index + 1)), script).unwrap();
+                let script = Self::command_script(&fixture.root, &(index + 1).to_string(), frames);
+                std::fs::write(fixture.root.join(format!("session-{}", index + 1)), script)
+                    .unwrap();
             });
             std::fs::write(fixture.root.join("launch-count"), b"0").unwrap();
             std::fs::write(&fixture.config.python, format!(
@@ -1581,7 +1605,8 @@ mod tests {
             json!({"kind":"done"}),
         ]);
         let result = fixture.run("replay", &mut ExecutionReport::default());
-        assert_eq!(result.observation.unwrap().kind, "pass");
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "pass", "{observation:?}");
         assert!(result.retained_input.is_none());
     }
     #[cfg(target_os = "macos")]
@@ -1836,6 +1861,149 @@ mod tests {
         });
         assert!(panic.is_err());
         assert_eq!(worker.take_log().observed, 0);
+    }
+    #[rstest::rstest]
+    #[case::no_oom(Ok(false), None)]
+    #[case::observed_oom(Ok(true), Some(("oom", "pending", None)))]
+    #[case::unavailable_evidence(Err(io::Error::new(io::ErrorKind::PermissionDenied, "resource denied")), Some(("infrastructure", "pending", Some("resource evidence: resource denied"))))]
+    fn resource_evidence_policy_preserves_classification(
+        #[case] evidence: io::Result<bool>,
+        #[case] expected: Option<(&str, &str, Option<&str>)>,
+    ) {
+        let actual = resource_observation(evidence).map(|observation| {
+            (
+                observation.kind,
+                observation.verification,
+                observation.rendered,
+            )
+        });
+        let expected = expected.map(|(kind, verification, rendered)| {
+            (
+                kind.to_owned(),
+                verification.to_owned(),
+                rendered.map(str::to_owned),
+            )
+        });
+        assert_eq!(actual, expected);
+    }
+    #[rstest::rstest]
+    #[case::clean_termination(None, 1, None)]
+    #[case::failed_termination(Some("cleanup denied"), 2, Some("cleanup failed: cleanup denied"))]
+    fn cleanup_failure_keeps_existing_candidate_and_records_infrastructure(
+        #[case] error: Option<&str>,
+        #[case] count: usize,
+        #[case] verification: Option<&str>,
+    ) {
+        let mut report = ExecutionReport {
+            outcomes: vec![Outcome {
+                test_id: "test".into(),
+                case_id: 7,
+                kind: "failure".into(),
+                original: Some("finding-0.bin".into()),
+                derived: vec!["evidence-1.bin".into()],
+                verification: "pending".into(),
+                detail: Some("original assertion".into()),
+            }],
+            ..ExecutionReport::default()
+        };
+        let original = serde_json::to_value(&report.outcomes[0]).unwrap();
+        report.record_cleanup_failure("test", error);
+        assert_eq!(report.outcomes.len(), count);
+        assert_eq!(serde_json::to_value(&report.outcomes[0]).unwrap(), original);
+        let cleanup = report.outcomes.get(1);
+        assert_eq!(
+            cleanup.map(|outcome| outcome.verification.as_str()),
+            verification
+        );
+        assert_eq!(
+            cleanup.map(|outcome| outcome.kind.as_str()),
+            verification.map(|_| "infrastructure")
+        );
+        assert_eq!(
+            cleanup.map(|outcome| outcome.test_id.as_str()),
+            verification.map(|_| "test")
+        );
+        assert_eq!(
+            cleanup.map(|outcome| outcome.case_id),
+            verification.map(|_| 0)
+        );
+        assert!(
+            cleanup
+                .and_then(|outcome| outcome.original.as_ref())
+                .is_none()
+        );
+        assert!(
+            cleanup
+                .and_then(|outcome| outcome.detail.as_ref())
+                .is_none()
+        );
+        assert_eq!(
+            cleanup.map(|outcome| outcome.derived.len()),
+            verification.map(|_| 0)
+        );
+    }
+    #[test]
+    fn required_spawn_pipe_preserves_the_supplied_handle() {
+        let handle = String::from("owned handle");
+        assert_eq!(
+            required_pipe(Some(handle), "missing pipe").unwrap(),
+            "owned handle"
+        );
+    }
+    #[rstest::rstest]
+    #[case::worker_stdin("missing stdin")]
+    #[case::worker_stdout("missing stdout")]
+    #[case::worker_stderr("missing stderr")]
+    #[case::collection_stdin("missing collection stdin")]
+    #[case::collection_stdout("missing collection stdout")]
+    #[case::collection_stderr("missing collection stderr")]
+    fn absent_spawn_pipe_preserves_exact_diagnostic(#[case] diagnostic: &'static str) {
+        let error = required_pipe::<String>(None, diagnostic).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), diagnostic);
+    }
+    #[test]
+    fn complete_collection_event_preserves_discovery_identity() {
+        let bytes = serde_json::to_vec(
+            &json!({"nodeids":["test"],"environment":{"python":3},"sources":{"test":"digest"}}),
+        )
+        .unwrap();
+        let discovery = collection_event(Ok(Ok(bytes)))
+            .break_value()
+            .unwrap()
+            .unwrap();
+        assert_eq!(discovery.targets(), ["test"]);
+        assert_eq!(discovery.environment(), &json!({"python":3}));
+        assert_eq!(
+            discovery.identity(&["test.py".into()]),
+            json!({"environment":{"python":3},"sources":{"test":"digest"},"implementation_sources":null,"selection":["test.py"]})
+        );
+    }
+    #[rstest::rstest]
+    #[case::malformed(Ok(Ok(b"not json".to_vec())), io::ErrorKind::InvalidData, "expected ident")]
+    #[case::oversized(Ok(Ok(vec![b'x'; 8*1024*1024+1])), io::ErrorKind::Other, "collection output exceeds limit")]
+    #[case::read_failure(
+        Ok(Err(io::Error::new(io::ErrorKind::PermissionDenied, "read denied"))),
+        io::ErrorKind::PermissionDenied,
+        "read denied"
+    )]
+    #[case::disconnected(
+        Err(mpsc::RecvTimeoutError::Disconnected),
+        io::ErrorKind::Other,
+        "collection output disconnected"
+    )]
+    fn terminal_collection_event_preserves_error_classification(
+        #[case] event: Result<io::Result<Vec<u8>>, mpsc::RecvTimeoutError>,
+        #[case] kind: io::ErrorKind,
+        #[case] diagnostic: &str,
+    ) {
+        let error = collection_event(event).break_value().unwrap().unwrap_err();
+        assert_eq!(error.kind(), kind);
+        assert!(error.to_string().contains(diagnostic), "{error}");
+    }
+    #[test]
+    fn collection_timeout_keeps_waiting_for_output() {
+        assert!(collection_event(Err(mpsc::RecvTimeoutError::Timeout)).is_continue());
     }
     proptest! {
         #[test]

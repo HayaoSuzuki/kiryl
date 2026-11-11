@@ -117,16 +117,13 @@ impl ArtifactStore {
     }
     fn save(&mut self, bytes: &[u8], kind: &str) -> io::Result<PathBuf> {
         loop {
-            let path = self.root.join(format!("{kind}-{}.bin", self.next));
+            let name = format!("{kind}-{}.bin", self.next);
+            let path = self.root.join(&name);
             self.next = self
                 .next
                 .checked_add(1)
                 .ok_or_else(|| io::Error::other("artifact IDs exhausted"))?;
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid artifact filename"))?;
-            match self.publish_new(name, bytes) {
+            match self.publish_new(&name, bytes) {
                 Ok(()) => return Ok(path),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.exists() => (),
                 Err(error) => return Err(error),
@@ -154,20 +151,16 @@ impl ArtifactStore {
             return Err(io::Error::other("original record exceeds limits"));
         }
         let path = self.save(&bytes, "finding")?;
-        path.into_os_string()
-            .into_string()
-            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
+        // The root was validated as UTF-8 above; save adds only an ASCII name.
+        Ok(path.to_string_lossy().into_owned())
     }
     /// Append evidence linked to a validated structured original; never replace it.
     /// # Errors
     /// Rejects foreign paths, non-original records, unknown schemas and oversized evidence.
     pub fn derived(&mut self, original: &str, evidence: &serde_json::Value) -> io::Result<String> {
-        let record = self.load_original(original)?;
-        let test_id = &record["test_id"];
-        let name = Path::new(original)
-            .file_name()
-            .ok_or_else(|| io::Error::other("missing finding filename"))?
-            .to_string_lossy();
+        let original = self.load_original(original)?;
+        let test_id = &original.record["test_id"];
+        let name = original.name;
         // JSON Value formatting is infallible; all arbitrary serialization has
         // already completed before this persistence boundary.
         let bytes =
@@ -177,15 +170,17 @@ impl ArtifactStore {
         if bytes.len() > 1024 * 1024 {
             return Err(io::Error::other("derived evidence exceeds limits"));
         }
-        self.save(&bytes, "evidence")?
-            .into_os_string()
-            .into_string()
-            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
+        // The validated original is a UTF-8 path whose parent equals this root;
+        // save adds only an ASCII name, preserving that representation.
+        Ok(self
+            .save(&bytes, "evidence")?
+            .to_string_lossy()
+            .into_owned())
     }
     /// Validate and load an original before starting a replay worker.
     /// # Errors
     /// Rejects foreign, oversized, malformed or unsupported original records.
-    fn load_original(&self, original: &str) -> io::Result<serde_json::Value> {
+    fn load_original<'a>(&self, original: &'a str) -> io::Result<ValidatedOriginal<'a>> {
         read_original(&self.root, original)
     }
     /// Save exact active input before attempting verification or shrinking.
@@ -287,7 +282,7 @@ impl ReplayContext {
             .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?
             .to_owned();
         let record = store.load_original(&original)?;
-        if record["test_id"] != manifest.identity.target {
+        if record.record["test_id"] != manifest.identity.target {
             return Err(io::Error::other(
                 "finding target does not match store identity",
             ));
@@ -335,7 +330,14 @@ impl ReplayContext {
     }
 }
 
-fn read_original(root: &Path, original: &str) -> io::Result<serde_json::Value> {
+// The validated basename travels with its parsed record so derivative storage
+// does not repeat path validation or manufacture another missing-name failure.
+struct ValidatedOriginal<'a> {
+    name: &'a str,
+    record: serde_json::Value,
+}
+
+fn read_original<'a>(root: &Path, original: &'a str) -> io::Result<ValidatedOriginal<'a>> {
     let path = Path::new(original);
     let name = path
         .file_name()
@@ -371,7 +373,7 @@ fn read_original(root: &Path, original: &str) -> io::Result<serde_json::Value> {
     {
         return Err(io::Error::other("incompatible original record"));
     }
-    Ok(record)
+    Ok(ValidatedOriginal { name, record })
 }
 
 /// Available finding values, independent of the persisted record layout.
@@ -399,7 +401,7 @@ pub fn describe_original(path: &Path) -> io::Result<FindingDescription> {
             .ok_or_else(|| io::Error::other("non UTF-8 finding path"))?,
     )?;
     let observation: ObservationDescription =
-        serde_json::from_value(record["observation"].clone())?;
+        serde_json::from_value(record.record["observation"].clone())?;
     Ok(FindingDescription {
         rendered: observation.rendered,
         fingerprint: observation.fingerprint,
@@ -427,6 +429,30 @@ impl ArtifactStore {
     /// # Errors
     /// Rejects incompatible records or malformed semantic evidence.
     pub fn load_finding(&self, original: &str) -> io::Result<SavedFinding> {
-        Ok(serde_json::from_value(self.load_original(original)?)?)
+        Ok(serde_json::from_value(
+            self.load_original(original)?.record,
+        )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_ids_fail_before_publishing_or_wrapping() {
+        let mut store = ArtifactStore {
+            root: PathBuf::from("unreached-artifact-destination"),
+            lock: PathBuf::new(),
+            next: u64::MAX,
+        };
+        assert_eq!(
+            store
+                .save_original(b"new original")
+                .unwrap_err()
+                .to_string(),
+            "artifact IDs exhausted"
+        );
+        assert_eq!(store.next, u64::MAX);
     }
 }

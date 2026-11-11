@@ -148,3 +148,10 @@ requires all cells, identical source/revision, complete source inventory, exact
 Rust line/function coverage and exact Python statement/branch coverage, including
 test implementations and coverage tooling. Missing native tests and zero-hit
 functions remain failures. No percentages are rounded up to meet the contract.
+
+Linux CI uses [the dedicated delegation launcher](../../tools/with-delegated-cgroup.sh)
+for hard-backend coverage and hard-resource gates. It requires the host's unified
+mount to already distribute memory, provisions only its own subtree, and executes
+the command as the ordinary runner. It never enables controllers on shared ancestors.
+The [hard-resource workflow](../../.github/workflows/product-hard-resource.yml) owns
+its native evidence rather than counting unprivileged fallback as enforcement.

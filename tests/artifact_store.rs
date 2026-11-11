@@ -73,7 +73,7 @@ fn invalid_derivatives_preserve_original(#[case] scenario: InvalidSource) {
     let mut store = ArtifactStore::open(&root).unwrap();
     let original = store.save_original(&[0, 255, 128]).unwrap();
     let source = invalid_source(
-        &fs::canonicalize(&root).unwrap(),
+        &fs::canonicalize(&*root).unwrap(),
         &mut store,
         &original,
         scenario,
@@ -88,13 +88,13 @@ fn failed_save_preserves_original() {
     let original = store.save_original(&[0, 255, 128]).unwrap();
     let destination = TemporaryRoot::new("retained");
     let moved = destination.join("moved");
-    fs::rename(&root, &moved).unwrap();
+    fs::rename(&*root, &*moved).unwrap();
     assert!(store.save_original(b"new").is_err());
     assert_eq!(
         fs::read(moved.join(original.file_name().unwrap())).unwrap(),
         [0, 255, 128]
     );
-    fs::rename(&moved, &root).unwrap();
+    fs::rename(&*moved, &*root).unwrap();
 }
 
 #[rstest::rstest]
@@ -360,7 +360,7 @@ fn replay_fixture() -> (TemporaryRoot, String, serde_json::Value) {
     let root = TemporaryRoot::new("replay-context");
     let environment = serde_json::json!({"selection":["test_x.py"],"python":"3.14"});
     let mut store = ArtifactStore::open_matching(
-        &root.as_ref().join("target-0"),
+        &root.join("target-0"),
         &serde_json::json!({"target":"test_x.py::test_x[a]","environment":environment}),
     )
     .unwrap();
@@ -391,14 +391,14 @@ fn replay_environment(environment: serde_json::Value, matching: bool) -> serde_j
 fn replay_context_excludes_campaign_writer() {
     let (root, original, _) = replay_fixture();
     let _context = kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).unwrap();
-    assert!(ArtifactStore::open(root.as_ref()).is_err());
+    assert!(ArtifactStore::open(&root).is_err());
 }
 #[test]
 fn dropping_replay_context_releases_campaign_lock() {
     let (root, original, _) = replay_fixture();
     let context = kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).unwrap();
     drop(context);
-    drop(ArtifactStore::open(root.as_ref()).unwrap());
+    drop(ArtifactStore::open(&root).unwrap());
 }
 
 #[rstest::rstest]
@@ -572,4 +572,96 @@ fn malformed_replay_record_releases_campaign_lock() {
     fs::write(&original, b"broken").unwrap();
     assert!(kiryl::artifacts::ReplayContext::open(std::path::Path::new(&original)).is_err());
     drop(ArtifactStore::open(&root).unwrap());
+}
+
+#[cfg(unix)]
+fn canonical_root_child() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "/private"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "/etc"
+    }
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::filesystem_root("/", "finding has no store")]
+#[case::root_child(canonical_root_child(), "missing campaign store")]
+fn replay_rejects_paths_without_campaign_ancestors_before_locking(
+    #[case] path: &str,
+    #[case] expected: &str,
+) {
+    let error = kiryl::artifacts::ReplayContext::open(std::path::Path::new(path))
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), expected);
+}
+
+#[test]
+fn empty_original_path_cannot_name_a_structured_finding() {
+    let root = TemporaryRoot::new("empty-original-path");
+    let mut store = ArtifactStore::open(&root).unwrap();
+    assert_eq!(
+        store
+            .derived("", &serde_json::json!({}))
+            .unwrap_err()
+            .to_string(),
+        "invalid original path"
+    );
+}
+
+#[test]
+fn missing_original_input_is_rejected_without_repair() {
+    let root = TemporaryRoot::new("missing-original-input");
+    let mut store = ArtifactStore::open(&root).unwrap();
+    let original = store
+        .record_original("x", &[1], &serde_json::json!({}))
+        .unwrap();
+    let corrupt = br#"{"version":1,"test_id":"x","observation":{}}"#;
+    fs::write(&original, corrupt).unwrap();
+    assert_eq!(
+        store
+            .derived(&original, &serde_json::json!({}))
+            .unwrap_err()
+            .to_string(),
+        "missing original input"
+    );
+    assert_eq!(fs::read(original).unwrap(), corrupt);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_raw_basename_cannot_become_a_derivative() {
+    let root = TemporaryRoot::new("non-utf-raw-basename");
+    let mut store = ArtifactStore::open(&root).unwrap();
+    let path = non_utf8_path(&fs::canonicalize(&*root).unwrap());
+    fs::write(&path, b"original bytes").unwrap();
+    assert_eq!(
+        store
+            .save_derivative(&path, b"candidate")
+            .unwrap_err()
+            .to_string(),
+        "invalid original"
+    );
+    assert_eq!(fs::read(path).unwrap(), b"original bytes");
+}
+
+#[test]
+fn finding_description_without_parent_is_rejected() {
+    assert!(kiryl::artifacts::describe_original(std::path::Path::new("")).is_err());
+}
+
+#[test]
+fn typed_finding_rejects_malformed_observation_without_repair() {
+    let root = TemporaryRoot::new("malformed-observation");
+    let mut store = ArtifactStore::open(&root).unwrap();
+    let original = store
+        .record_original("test", &[1], &serde_json::Value::Null)
+        .unwrap();
+    let before = fs::read(&original).unwrap();
+    assert!(store.load_finding(&original).is_err());
+    assert_eq!(fs::read(&original).unwrap(), before);
 }
