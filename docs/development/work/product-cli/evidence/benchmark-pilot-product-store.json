@@ -1,8 +1,1 @@
-{
-  "store": "/var/folders/f0/ldy1m0vn1f1g4w873rm313xr0000gn/T/kiryl-benchmark-gbak_f1i/product/store",
-  "bytes": 1441,
-  "files": {
-    "target-0/corpus.json": 1027,
-    "target-0/manifest.json": 414
-  }
-}
+{"store":"/var/folders/f0/ldy1m0vn1f1g4w873rm313xr0000gn/T/kiryl-benchmark-gbak_f1i/product/store","bytes":1441,"files":{"target-0/corpus.json":1027,"target-0/manifest.json":414}}
