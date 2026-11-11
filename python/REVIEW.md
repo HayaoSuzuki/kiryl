@@ -203,3 +203,31 @@ marker strength. Selection's hook class was moved out of main to keep its
 collection responsibility explicit without adding a pass-through API.
 Verification: collection/bootstrap/replay targeted suites 22 passed in 4.86s;
 Ruff check, format and ty passed. Native matrix rerun is owned by the parent.
+
+## Linux best-effort cleanup capability distinction
+
+Ubuntu CI showed that the ordinary-descendant cleanup regression incorrectly
+required capabilities.tree_cleanup=true. The portable backend conservatively
+disclaims hard cleanup of detached descendants even when its process group
+terminates an ordinary inherited child. Removed that capability assertion from
+the best-effort test; retained the actual /proc exit/zombie assertion and failure
+cleanup. The Windows Job Object test keeps its separate native-capability claim.
+This change makes no stronger portable guarantee. Ruff, format (17 files) and ty
+passed locally; focused Linux test collected and skipped on macOS (1 skipped,
+11 deselected). Actual Linux execution remains delegated to native CI.
+
+## Final error-report CLI regressions
+
+Added three actual CLI regressions against the parent's rebuilt final binary:
+fixture setup RuntimeError retains its sentinel in infrastructure outcome.detail;
+collection import failure replaces a stale successful JSON report with status
+infrastructure and nonempty infrastructure_errors; an existing writer.lock
+produces a target infrastructure outcome/detail without changing the lock.
+These were added after the Rust fixes and are not claimed as red-green evidence.
+
+Five review passes checked (1) setup diagnostics originate from pytest reports,
+(2) stale-report replacement is asserted by absent stale key and changed status,
+(3) lock failure is isolated from source/runtime failures, (4) lock contents remain
+unchanged, and (5) infrastructure exit 2 is checked independently of report shape.
+Focused native macOS CPython 3.14 run: 3 passed, 12 deselected in 0.80 seconds.
+Ruff check, formatting and ty passed. No additional feature work was introduced.

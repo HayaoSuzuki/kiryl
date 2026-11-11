@@ -25,8 +25,8 @@ the dedicated job; they do not become successful skips. The gate validates
 privileged CI provisioning, not rootless systemd delegation on arbitrary hosts.
 
 The [evidence runner](evidence/hard-resource-run.py) invokes the actual product
-CLI without `--best-effort`. A 512 MiB control requires two descendants to retain
-96 MiB each. The 256 MiB run must exercise the hard backend under aggregate
+CLI without `--best-effort`. A 768 MiB control requires two descendants to retain
+192 MiB each. The 256 MiB run must exercise the hard backend under aggregate
 pressure. Allocation touches each 4 KiB interval so lazy zero-filled pages do not
 invalidate the resident-memory probe. A separate sleeping descendant is left to
 the supervisor, and recorded descendant PIDs must be terminated afterward.
@@ -75,3 +75,31 @@ The first native CI run must supply the resource evidence. Configuring jobs and
 cross-compiling code do not establish native product compatibility. The existing
 resource audit owner should link successful or failed observations with their
 revision before changing its acceptance claims.
+
+## First native gate failures and corrections
+
+Run `43008964697` at merge revision `da8d9a1` did not establish hard-resource
+acceptance. Linux failed during collection before executing the control. The
+runner canonicalized the requested interpreter path with `resolve()`, following
+Linux virtualenv symlinks into the base interpreter and losing the pinned
+virtualenv dependencies. A local regression reproduced this path change before
+switching to `absolute()`, which preserves the selected virtualenv symlink.
+The sudo scope now also preserves only `LD_LIBRARY_PATH` for dynamically linked
+hosted Python installations. Collection diagnostics are handled separately.
+
+Windows completed 48 cases at the initial 256 MiB allowance: all recorded pairs
+of 96 MiB allocations succeeded. That workload was insufficient to demonstrate
+the intended aggregate denial. Each descendant now commits and touches 192 MiB,
+so their combined allocations alone exceed the 256 MiB Job Object allowance;
+the ample-memory control is increased to 768 MiB. This changes the workload,
+not the enforcement assertion.
+
+The Windows cleanup failure used numeric PIDs across many worker lifetimes;
+recorded PIDs were reused in different child records. It therefore did not
+establish that the original process survived. Before allocation is authorized,
+the target now duplicates each actual CPython `Popen` process handle into the
+external evidence observer. Cleanup checks query those owned handles and close
+them afterward. A live original descendant still fails the gate, while PID reuse
+cannot impersonate it. This is a CI evidence mechanism, not a product API or
+change to Windows cleanup implementation. The next native run must determine
+whether the exact descendants terminate and whether aggregate denial occurs.

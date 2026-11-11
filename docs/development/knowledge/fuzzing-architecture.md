@@ -16,19 +16,22 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: dc0780c742210f90984b98fda6bac99b968cd9badbbc74e384ed8bf8924344ff
+  sha256: 0d06b2df16e635c4dc2dbc0e01ad2567d8c2a00ecd71ad29059813ee3c20b4ed
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: 00d0889053861743b140f6d8466395f42ad6c013b419f0aaf9ec09868ff6724e
+  sha256: cbf6151c8dae3938c1ced9d39c21017db44afc9f17240ae71a2549dac671e08c
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
   sha256: c47f8715519776ada1dcdcbc0ac521d2e23e1aec4b38ba75d712d4a27414581a
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
-  working_tree: modified
-  sha256: 9f6201f6da6e282f90ce91590572272f7dccbf6f26f0ea1c9d199f816cba2015
+  revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
+- id: product-report
+  resource: ../../../src/report.rs
+  working_tree: untracked
+  sha256: d6c45d453a1d3aafd727bdda7bec5be304a448481c7af56caa7ab54c26203b6f
 ---
 # Selected direction
 
@@ -58,10 +61,12 @@ in the controller. Per-case IPC overhead is the corresponding cost. Reconsider
 the placement only with measurements showing that this cost warrants a more
 complex integration.[^proposal]
 
-# Current evidence and unresolved gates
+# Historical feasibility baseline and unresolved gates
 
-The product crate still contains only the development scaffold. The integrated
-Rust/Python architecture and full platform matrix have not been runtime-tested.
+At the historical crate revision cited below, the product contained only the
+development scaffold. Product implementation and newer local observations are
+recorded in the product follow-up below; full native acceptance requires actual
+CI evidence rather than this earlier baseline.
 The isolated Python experiment now has limited evidence described in the
 [fixture lifecycle audit](fixture-lifecycle-audit.md) and
 [Hypothesis replay audit](hypothesis-replay-audit.md), and
@@ -138,3 +143,13 @@ resource or reproduction guarantees to count a platform as accepted.
 [^product-executor]: [Native executor](../../../src/executor.rs).
 [^product-store]: [Artifact store](../../../src/artifacts.rs).
 [^product-python]: [Python worker](../../../python/kiryl_adapter/worker.py).
+
+The [integration review](../work/product-cli/integration-review.md),
+[finite boundedness observation](../work/product-cli/boundedness-review.md), and
+[ordinary Hypothesis comparison](../work/product-cli/benchmark-review.md) retain
+review findings, negative observations and finite-run measurement limits. Finding
+presentation and machine-readable error reports now have a dedicated Rust report
+owner; unknown collection completion is kept explicit instead of preserving a
+stale successful report.[^product-report]
+
+[^product-report]: [Finding presentation](../../../src/report.rs).

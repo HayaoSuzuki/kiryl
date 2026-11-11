@@ -333,7 +333,9 @@ impl Executor {
     pub fn new(interrupted: Arc<AtomicBool>) -> Self {
         Self { interrupted }
     }
-    /// Execute the finite experimental schedule, preserving findings before replay.
+    /// Execute one product exploration slice, preserving findings before fresh replay.
+    /// Active inputs survive worker termination; unfinished checks remain pending.
+    /// Cooperative slice expiry stops admission and returns through pytest teardown.
     /// # Errors
     /// Returns invalid configuration, transport setup, or durable write failures.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)] // owned public configuration is the planned boundary
@@ -770,7 +772,7 @@ impl Executor {
                     original: None,
                     derived: vec![],
                     verification: "pending".into(),
-                    detail: None,
+                    detail: observation.rendered.clone(),
                 });
                 return Ok(RunResult {
                     observation: Some(observation),
@@ -1042,7 +1044,7 @@ impl Executor {
                                         original: original.clone(),
                                         derived: vec![],
                                         verification: "pending".into(),
-                                        detail: None,
+                                        detail: value.rendered.clone(),
                                     });
                                 }
                             } else {
@@ -1190,7 +1192,7 @@ impl Executor {
                     original: original.clone(),
                     derived: vec![],
                     verification: "pending".into(),
-                    detail: None,
+                    detail: value.rendered.clone(),
                 });
             }
         }
@@ -1334,6 +1336,7 @@ pub fn collect(
     let log = Arc::new(Mutex::new(LogTail::default()));
     let tail = Arc::clone(&log);
     let retained = limits.retained_output_bytes;
+    let (log_complete, log_ready) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut bytes = [0; 8192];
         while let Ok(count) = stderr.read(&mut bytes) {
@@ -1344,6 +1347,7 @@ pub fn collect(
                 log.append(&bytes[..count], retained);
             }
         }
+        let _ = log_complete.send(());
     });
     child
         .stdin
@@ -1381,7 +1385,20 @@ pub fn collect(
     guard.terminate_tree()?;
     let _ = child.kill();
     let _ = child.wait();
-    result
+    let _ = log_ready.recv_timeout(Duration::from_millis(100));
+    result.map_err(|error| {
+        let bytes = log
+            .lock()
+            .map(|log| log.tail.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        io::Error::new(
+            error.kind(),
+            format!(
+                "collection: {error}; stderr tail: {}",
+                String::from_utf8_lossy(&bytes)
+            ),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -63,3 +63,30 @@ This record describes working-tree implementation, not native matrix acceptance.
 5. Tests do not establish universal fairness, absence of bugs, complete Python
    semantics or machine-crash durability. Formal model assumptions and benchmark
    limits are recorded alongside their evidence rather than promoted to guarantees.
+
+## Final independent review follow-up
+
+A fresh reviewer identified missing JSON reports on early collection/storage
+errors and discarded infrastructure explanations. A subprocess regression first
+showed a stale prior-success report surviving an invocation failure. Error paths
+now atomically publish schema-1 reports with available context, and observed
+infrastructure reasons populate outcome detail. Campaign storage errors preserve
+already aggregated target reports. Finding presentation has its own report owner,
+showing available rendered values, fingerprints and replay/minimize argument arrays.
+
+Independent final design score was 6.25/10 (five diagnostics passing): typed replay
+context/status ownership and further interface simplification remain improvement
+opportunities. Product execution promises now replace the old experimental API
+comment. No claim of perfect design is made.
+
+Latest scheduler boundary regression reproduced missing-status indexing panic;
+unknown status entries are now ineligible. A fresh finite ASan campaign on the
+revised scheduler completed 3,395,972 executions in 11 seconds, seed 17, coverage89,
+features262, reported RSS468MiB with no failure. The earlier campaign remains
+separate evidence about its snapshot.
+
+The final focused recheck confirmed the reporting/detail blockers fixed and
+scored the current design 7.5/10 (six of eight diagnostics). Implementation
+independence and newcomer comprehension still need typed replay identities and
+centralized status/report contracts. Collector rejection reasons are now kept
+in the error report rather than replaced with a generic message.

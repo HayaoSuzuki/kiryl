@@ -28,9 +28,10 @@ fn milliseconds(value: &str) -> io::Result<u64> {
         .map_err(|_| invalid("duration too large"))
 }
 #[allow(clippy::too_many_lines)] // Single CLI dispatch; worker and campaign semantics remain encapsulated.
-fn run() -> Result<i32, Box<dyn std::error::Error>> {
+fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "help".into());
+    context["command"] = json!(command);
     if ["help", "--help", "-h"].contains(&command.as_str()) {
         println!(
             "kiryl run [PATH_OR_NODE...] [-k EXPR] [-m MARKER] [--duration SECONDS] [--python PATH] [--best-effort] [--store DIR] [--report FILE]\nkiryl replay FINDING [OPTIONS]\nkiryl minimize FINDING [OPTIONS]"
@@ -104,25 +105,50 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let handler = Arc::clone(&flag);
     ctrlc::set_handler(move || handler.store(true, Ordering::Relaxed))?;
     let requested_limits = serde_json::to_value(&limits)?;
+    context["effective_limits"] = requested_limits.clone();
+    context["selection"] = json!(selection);
     let overall_start = std::time::Instant::now();
     let discovered = kiryl::executor::collect(&python, &selection, &limits, &flag)?;
     if let Some(budget) = limits.campaign_ms.as_mut() {
         *budget = budget
             .saturating_sub(u64::try_from(overall_start.elapsed().as_millis()).unwrap_or(u64::MAX));
     }
+    context["environment"] = discovered["environment"].clone();
+    if let Some(known) = discovered["nodeids"].as_array() {
+        context["targets"] = json!(
+            known
+                .iter()
+                .map(|target| json!({"target":target,"status":"unexecuted"}))
+                .collect::<Vec<_>>()
+        );
+    }
     if discovered
         .get("error")
         .is_some_and(|value| !value.is_null())
     {
-        return Err(invalid("pytest collection failed; no targets executed").into());
+        return Err(invalid(&format!(
+            "pytest collection failed; no targets executed: {}",
+            discovered["error"]
+        ))
+        .into());
     }
+    context["environment"] = discovered["environment"].clone();
     let targets: Vec<String> = serde_json::from_value(discovered["nodeids"].clone())?;
+    context["selection_complete"] = json!(true);
     if targets.is_empty() {
         return Err(invalid("selection contains no supported Hypothesis tests").into());
     }
     let identity = json!({"environment":discovered["environment"],"sources":discovered["sources"],"implementation_sources":discovered["implementation_sources"],"selection":selection});
+    context["environment_identity"] = identity.clone();
+    context["targets"] = json!(
+        targets
+            .iter()
+            .map(|target| json!({"target":target,"status":"unexecuted"}))
+            .collect::<Vec<_>>()
+    );
     let environment_identity = identity.clone();
     let remaining_execution_limits = serde_json::to_value(&limits)?;
+    let replay_python = python.clone();
     let mut report = if command == "run" {
         campaign::run(
             &CampaignConfig {
@@ -173,12 +199,21 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
             )?,
         )?
     };
+    let best_effort = requested_limits["allow_best_effort"]
+        .as_bool()
+        .unwrap_or(false);
     report["effective_limits"] = requested_limits;
     report["remaining_execution_limits"] = remaining_execution_limits;
     report["environment_identity"] = environment_identity;
     report["schema_version"] = json!(1);
     report["command"] = json!(command);
     report["total_elapsed_ms"] = json!(overall_start.elapsed().as_millis());
+    kiryl::report::present_findings(
+        &mut report,
+        &env::current_exe()?,
+        &replay_python,
+        best_effort,
+    )?;
     let bytes = serde_json::to_vec_pretty(&report)?;
     if let Some(path) = report_path {
         publish(&path, &bytes)?;
@@ -214,16 +249,40 @@ fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 fn main() {
-    let code = run().unwrap_or_else(|error| {
+    let started = std::time::Instant::now();
+    let args: Vec<_> = env::args_os().skip(1).collect();
+    let mut context = json!({"schema_version":1,"targets":[],"selection_complete":false});
+    let code = run(&mut context).unwrap_or_else(|error| {
         eprintln!("kiryl: {error}");
-        if error
-            .downcast_ref::<io::Error>()
-            .is_some_and(|e| e.kind() == io::ErrorKind::Interrupted)
-        {
-            130
+        let kind = error.downcast_ref::<io::Error>().map(io::Error::kind);
+        let code = match kind {
+            Some(io::ErrorKind::Interrupted) => 130,
+            Some(io::ErrorKind::TimedOut) => 0,
+            _ => 2,
+        };
+        context["status"] = json!(match code {
+            130 => "interrupted",
+            0 => "campaign_cancelled",
+            _ => "infrastructure",
+        });
+        context["interrupted"] = json!(code == 130);
+        context["elapsed_ms"] = json!(started.elapsed().as_millis());
+        context["infrastructure_errors"] = if code == 2 {
+            json!([error.to_string().chars().take(16384).collect::<String>()])
         } else {
-            2
+            json!([])
+        };
+        let bytes = serde_json::to_vec_pretty(&context).unwrap_or_default();
+        if let Some([_, report_path]) = args.windows(2).find(|pair| pair[0] == "--report") {
+            if let Err(error) = publish(Path::new(report_path), &bytes) {
+                eprintln!("kiryl: error report persistence failed: {error}");
+                println!("{}", String::from_utf8_lossy(&bytes));
+                return 2;
+            }
+        } else {
+            println!("{}", String::from_utf8_lossy(&bytes));
         }
+        code
     });
     std::process::exit(code);
 }

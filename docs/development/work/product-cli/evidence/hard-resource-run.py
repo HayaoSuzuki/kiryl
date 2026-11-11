@@ -28,9 +28,11 @@ import sys
 import time
 root = Path(sys.argv[1])
 slot = sys.argv[2]
+while not (root / 'go').exists():
+    time.sleep(.01)
 try:
     blocks = []
-    for _ in range(96):
+    for _ in range(192):
         block = bytearray(1024 * 1024)
         block[::4096] = b"x" * 256
         blocks.append(block)
@@ -43,6 +45,36 @@ except MemoryError:
     raise SystemExit(7)
 """
 
+def transfer_handles(children):
+    if sys.platform != 'win32':
+        return []
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.DuplicateHandle.argtypes = (wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.DuplicateHandle.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    observer = kernel.OpenProcess(0x0040, False, int(os.environ['KIRYL_HARD_OBSERVER_PID']))
+    if not observer:
+        raise ctypes.WinError(ctypes.get_last_error())
+    handles = []
+    try:
+        for child in children:
+            handle = wintypes.HANDLE()
+            # CPython's Popen retains the exact process handle, including when
+            # the child has exited. Duplicate into the external observer before
+            # authorizing allocation, so PID reuse cannot invalidate cleanup.
+            if not kernel.DuplicateHandle(kernel.GetCurrentProcess(), int(child._handle), observer, ctypes.byref(handle), 0x1000, False, 0):
+                raise ctypes.WinError(ctypes.get_last_error())
+            handles.append(handle.value)
+    finally:
+        kernel.CloseHandle(observer)
+    return handles
+
 @given(st.just(None))
 def test_descendant_aggregate(_):
     global LINGER
@@ -50,7 +82,9 @@ def test_descendant_aggregate(_):
         LINGER = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(120)'])
     root = Path(tempfile.mkdtemp(dir=os.environ['KIRYL_HARD_TRACE']))
     children = [subprocess.Popen([sys.executable, '-I', '-c', CHILD, str(root), str(i)]) for i in range(2)]
+    (root / 'handles.json').write_text(json.dumps(transfer_handles([LINGER] + children)))
     (root / 'pids.json').write_text(json.dumps([LINGER.pid] + [child.pid for child in children]))
+    (root / 'go').touch()
     try:
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -72,34 +106,23 @@ def test_descendant_aggregate(_):
 '''
 
 
-def alive(pid):
-    if sys.platform == "win32":
-        import ctypes
-        from ctypes import wintypes
+def alive_handle(handle):
+    import ctypes
+    from ctypes import wintypes
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-        kernel.OpenProcess.restype = wintypes.HANDLE
-        kernel.GetExitCodeProcess.argtypes = (
-            wintypes.HANDLE,
-            ctypes.POINTER(wintypes.DWORD),
-        )
-        kernel.GetExitCodeProcess.restype = wintypes.BOOL
-        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
-        kernel.CloseHandle.restype = wintypes.BOOL
-        handle = kernel.OpenProcess(0x1000, False, pid)
-        if not handle:
-            error = ctypes.get_last_error()
-            if error == 87:  # ERROR_INVALID_PARAMETER: PID no longer exists.
-                return False
-            raise ctypes.WinError(error)
-        try:
-            code = wintypes.DWORD()
-            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
-                raise ctypes.WinError(ctypes.get_last_error())
-            return code.value == 259  # STILL_ACTIVE
-        finally:
-            kernel.CloseHandle(handle)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+    code = wintypes.DWORD()
+    if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return code.value == 259  # STILL_ACTIVE
+
+
+def alive(pid):
     stat = Path(f"/proc/{pid}/stat")
     try:
         return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
@@ -111,7 +134,11 @@ def check_run(binary, python, root, evidence, name, memory):
     trace = root / (name + "-trace")
     trace.mkdir()
     report = evidence / (name + ".json")
-    environment = dict(os.environ, KIRYL_HARD_TRACE=str(trace))
+    environment = dict(
+        os.environ,
+        KIRYL_HARD_TRACE=str(trace),
+        KIRYL_HARD_OBSERVER_PID=str(os.getpid()),
+    )
     completed = subprocess.run(
         [
             str(binary),
@@ -162,10 +189,47 @@ def check_run(binary, python, root, evidence, name, memory):
     assert records, "no descendant processes were exercised"
     pids = [pid for record in records for pid in json.loads(record.read_text())]
     assert len(pids) >= 3
+    handles = (
+        [
+            handle
+            for record in records
+            for handle in json.loads((record.parent / "handles.json").read_text())
+        ]
+        if sys.platform == "win32"
+        else []
+    )
+    if sys.platform == "win32":
+        assert len(handles) == len(pids), (
+            "every descendant must have an observer-owned handle"
+        )
+    survivors = lambda: (
+        [handle for handle in handles if alive_handle(handle)]
+        if sys.platform == "win32"
+        else [pid for pid in pids if alive(pid)]
+    )
     deadline = time.monotonic() + 5
-    while any(alive(pid) for pid in pids) and time.monotonic() < deadline:
+    while survivors() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert not any(alive(pid) for pid in pids), "a descendant survived campaign cleanup"
+    remaining = survivors()
+    (evidence / (name + "-cleanup.json")).write_text(
+        json.dumps(
+            {
+                "remaining": remaining,
+                "identity": "owned-process-handle" if handles else "linux-proc-state",
+            }
+        )
+    )
+    if handles:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel.CloseHandle.restype = wintypes.BOOL
+        for handle in handles:
+            if not kernel.CloseHandle(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+    assert not remaining, "a descendant survived campaign cleanup"
     kinds = {outcome["kind"] for outcome in target["outcomes"]}
     if name == "control":
         assert value["targets"][0]["attempts"] > 0
@@ -216,15 +280,15 @@ def main():
         (root / "test_hard.py").write_text(TARGET)
         check_run(
             args.binary.resolve(),
-            args.python.resolve(),
+            args.python.absolute(),
             root,
             args.evidence.resolve(),
             "control",
-            512,
+            768,
         )
         check_run(
             args.binary.resolve(),
-            args.python.resolve(),
+            args.python.absolute(),
             root,
             args.evidence.resolve(),
             "aggregate",

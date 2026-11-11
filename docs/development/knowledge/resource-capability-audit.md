@@ -26,6 +26,15 @@ sources:
   resource: ../work/coverage-guided-python-fuzzing/evidence/ci-native-matrix.json
   working_tree: untracked
   sha256: 5177b6bc8d78afdf7bcfc86de3c278d83a489d92fc4414d6de8fdd9d85d7d792
+- id: product-resource
+  resource: ../../../src/resource/mod.rs
+  revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
+- id: product-parent
+  resource: ../../../src/resource/linux.rs
+  revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
+- id: product-hard-gate
+  resource: ../../../.github/workflows/product-hard-resource.yml
+  revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
 ---
 # Capability contract and observations
 
@@ -95,11 +104,15 @@ The product executor now attaches collection as well as execution before target
 imports, and reports `oom_evidence_complete` separately from hard enforcement.
 Linux exposes positive kernel counter evidence; Windows hard Job Object limits
 remain distinct from completion notification delivery. Missing Windows notification
-is not asserted to mean no limit event. Product tests and the dedicated hard-gate
+is not asserted to mean no limit event.[^product-resource] Product tests and the dedicated hard-gate
 workflow are recorded in the [hard-resource review](../work/product-cli/hard-resource-review.md).
 
 The Linux implementation can select an explicit `KIRYL_CGROUP_PARENT` only within
 the resolved process cgroup ancestry/mount. A dedicated delegated parent distributes
 memory to separate controller and worker leaves. kiryl does not enable controllers
-on shared ancestors. Native product evidence must come from actual gate execution;
-the historical experiment evidence above is not substituted for those results.
+on shared ancestors.[^product-parent] Native product evidence must come from actual gate execution;
+the historical experiment evidence above is not substituted for those results.[^product-hard-gate]
+
+[^product-resource]: [Product capability reporting](../../../src/resource/mod.rs).
+[^product-parent]: [Delegated Linux parent](../../../src/resource/linux.rs).
+[^product-hard-gate]: [Required product hard-resource gates](../../../.github/workflows/product-hard-resource.yml).

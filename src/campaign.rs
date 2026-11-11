@@ -59,25 +59,31 @@ pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result
         };
         let mut limits = config.limits.clone();
         limits.campaign_ms = remaining.map(|m| u64::try_from(m).unwrap_or(u64::MAX));
-        let report = executor
-            .run(ExecutorConfig {
-                python: config.python.clone(),
-                pytest_args: config.pytest_args.clone(),
-                invocations: vec![Invocation {
-                    test_id: config.targets[index].clone(),
-                    inputs: vec![],
-                }],
-                limits,
-                seed: config
-                    .seed
-                    .wrapping_add(u64::try_from(charged[index]).unwrap_or(u64::MAX)),
-                search: true,
-                feedback: true,
-                baseline: false,
-                output: config.store.join(format!("target-{index}")),
-                identity: json!({"environment":config.identity,"target":config.targets[index]}),
-            })
-            .map_err(io::Error::other)?;
+        let report = match executor.run(ExecutorConfig {
+            python: config.python.clone(),
+            pytest_args: config.pytest_args.clone(),
+            invocations: vec![Invocation {
+                test_id: config.targets[index].clone(),
+                inputs: vec![],
+            }],
+            limits,
+            seed: config
+                .seed
+                .wrapping_add(u64::try_from(charged[index]).unwrap_or(u64::MAX)),
+            search: true,
+            feedback: true,
+            baseline: false,
+            output: config.store.join(format!("target-{index}")),
+            identity: json!({"environment":config.identity,"target":config.targets[index]}),
+        }) {
+            Ok(report) => report,
+            Err(error) => {
+                targets[index]["status"] = json!("infrastructure");
+                targets[index]["report"] =
+                    json!({"outcomes":[{"kind":"infrastructure","detail":error.to_string()}]});
+                break;
+            }
+        };
         charged[index] = charged[index].saturating_add(report.exploration_ms.max(1));
         stopped[index] = report.outcomes.iter().any(|outcome| {
             !["pass", "reject", "campaign_cancelled"].contains(&outcome.kind.as_str())

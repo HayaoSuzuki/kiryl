@@ -57,41 +57,41 @@ Campaign state tracks remaining monotonic wall budget across collection/setup/se
 
 ## Task 1: Product contracts and persistence
 
-- [ ] Update existing OKF architecture/store owners with adoption reasons, alternatives and reconsideration conditions; explicitly record scaffold versus experimental evidence.
-- [ ] Add failing Rust tests for immutable original writes, unsupported schemas, variant separation, mismatch rejection, locking and injected write failures.
-- [ ] Implement `ArtifactStore::open`, `save_original`, `save_derivative` and bounded corpus load/save in `src/artifacts.rs`; return typed errors, never silently repair incompatible artifacts.
-- [ ] Run targeted tests, five implementation reviews and five test reviews; commit this independently reviewable boundary.
+- [x] Update existing OKF architecture/store owners with adoption reasons, alternatives and reconsideration conditions; explicitly record scaffold versus experimental evidence.
+- [x] Add failing Rust tests for immutable original writes, unsupported schemas, variant separation, mismatch rejection, locking and injected write failures.
+- [x] Implement `ArtifactStore::open`, `save_original`, `save_derivative` and bounded corpus load/save in `src/artifacts.rs`; return typed errors, never silently repair incompatible artifacts.
+- [x] Run targeted tests, five implementation reviews and five test reviews; commit this independently reviewable boundary.
 
 ## Task 2: Native executor and Python adapter
 
-- [ ] Add product regressions corresponding to experimental lifecycle, replay, protocol and resource tests before promoting code.
-- [ ] Implement `Executor` as the sole process/transport owner; expose target discovery and bounded invocation outcomes to campaign code, keeping wire types private.
-- [ ] Implement the packaged adapter and reject unsupported Python/Hypothesis versions before target execution; preserve pytest fixture/session lifetimes and stateful semantics.
-- [ ] Exercise setup errors, case deadlines, interrupted frames, binary/FD output, child output, tree cleanup and hard-limit rejection. Windows tests include direct Win32 handles and ambiguous termination classification.
-- [ ] Run strict Rust checks, Ruff ALL/format and ty all-error checks; record five implementation and five test review passes and commit.
+- [x] Add product regressions corresponding to experimental lifecycle, replay, protocol and resource tests before promoting code.
+- [x] Implement `Executor` as the sole process/transport owner; expose target discovery and bounded invocation outcomes to campaign code, keeping wire types private.
+- [x] Implement the packaged adapter and reject unsupported Python/Hypothesis versions before target execution; preserve pytest fixture/session lifetimes and stateful semantics.
+- [x] Exercise setup errors, case deadlines, interrupted frames, binary/FD output, child output, tree cleanup and hard-limit rejection. Windows tests include direct Win32 handles and ambiguous termination classification.
+- [x] Run strict Rust checks, Ruff ALL/format and ty all-error checks; record five implementation and five test review passes and commit.
 
 ## Task 3: Search, scheduling and CLI
 
-- [ ] Add failing tests for budget precedence, fair exploration-time allocation, overshoot debit, first-finding target stop, remaining-target continuation and unexecuted statuses.
-- [ ] Implement bounded `Search` and `Campaign::run` using executor outcomes and artifact methods. Persist active exact input before verification or recovery transitions.
-- [ ] Implement CLI contracts above and JSON reports; integration-test discovery, run-until-interrupt, finite campaigns, restart from corpus and failure presentation.
-- [ ] Generate Lean executable expectations for state/budget/original invariants and compare the Rust transitions against them. State modeling exclusions explicitly.
-- [ ] Add proptest and finite cargo-fuzz targets for wire/store/state boundaries. Record duration, runs, toolchains and regressions.
-- [ ] Complete five implementation and five test review passes; commit.
+- [x] Add failing tests for budget precedence, fair exploration-time allocation, overshoot debit, first-finding target stop, remaining-target continuation and unexecuted statuses.
+- [x] Implement bounded `Search` and `Campaign::run` using executor outcomes and artifact methods. Persist active exact input before verification or recovery transitions.
+- [x] Implement CLI contracts above and JSON reports; integration-test discovery, run-until-interrupt, finite campaigns, restart from corpus and failure presentation.
+- [x] Generate Lean executable expectations for state/budget/original invariants and compare the Rust transitions against them. State modeling exclusions explicitly.
+- [x] Add proptest and finite cargo-fuzz targets for wire/store/state boundaries. Record duration, runs, toolchains and regressions.
+- [x] Complete five implementation and five test review passes; commit.
 
 ## Task 4: Fresh replay and minimization
 
-- [ ] Add failing subprocess tests for reproducible, unstable, skipped, rejected, budget-exhausted and worker-crash findings.
-- [ ] Implement replay and semantic minimization through the adapter and executor. Candidate success requires fresh fingerprint confirmation; retain originals and unfinished candidates.
-- [ ] Verify ordinary pytest replay/database behavior and explain settings/database differences in user guidance.
-- [ ] Complete strict checks and five implementation/test review passes; commit.
+- [x] Add failing subprocess tests for reproducible, unstable, skipped, rejected, budget-exhausted and worker-crash findings.
+- [x] Implement replay and semantic minimization through the adapter and executor. Candidate success requires fresh fingerprint confirmation; retain originals and unfinished candidates.
+- [x] Verify ordinary pytest replay/database behavior and explain settings/database differences in user guidance.
+- [x] Complete strict checks and five implementation/test review passes; commit.
 
 ## Task 5: Acceptance and CI
 
-- [ ] Extend existing product CI using hoimin's finite fuzz budget/corpus retention and taloon's separated Rust/Python quality jobs; retain SHA pins, read-only permissions and job timeouts. Do not import publishing workflows.
+- [x] Extend existing product CI using hoimin's finite fuzz budget/corpus retention and taloon's separated Rust/Python quality jobs; retain SHA pins, read-only permissions and job timeouts. Do not import publishing workflows.
 - [ ] Run product end-to-end scenarios on macOS/Linux/Windows × CPython 3.14/3.15; retain revision/environment evidence. Delegated-cgroup Linux hard enforcement is a separate required execution, not a skip counted as success.
-- [ ] Measure long runs: elapsed time, trials, RSS, saved bytes and bounded histories. Compare ordinary Hypothesis with equal seed/time and isolated databases/corpora, including negative results.
-- [ ] Update user commands/prerequisites and existing OKF owners with actual evidence and remaining resource gates.
+- [x] Measure long runs: elapsed time, trials, RSS, saved bytes and bounded histories. Compare ordinary Hypothesis with equal seed/time and isolated databases/corpora, including negative results.
+- [x] Update user commands/prerequisites and existing OKF owners with actual evidence and remaining resource gates.
 - [ ] Complete five final implementation/test review passes, all repository checks and final review before creating a PR. Do not claim unexecuted platform acceptance.
 
 ## Design self-review record
@@ -111,3 +111,11 @@ Campaign state tracks remaining monotonic wall budget across collection/setup/se
 5. Proportion/evidence: the plan does not mark future execution as evidence. Remaining planning work is task-local signatures, exact corpus caps and report field enums; settle and review these before implementing their owning tasks.
 
 Implementation and test reviews are pending, not represented by the design/plan passes above.
+
+## Execution status clarification
+
+Tasks 1–4 have implementation and local verification evidence in the sibling
+review records; checkboxes do not establish native matrix acceptance. Task 5's
+native matrix/hard-resource and final branch validation remain open until their
+actual jobs pass. The 120-second boundedness observation is finite evidence,
+not a proof of indefinite resource stability.

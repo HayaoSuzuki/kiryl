@@ -7,6 +7,7 @@ pub mod artifacts;
 
 pub mod campaign;
 pub mod executor;
+pub mod report;
 mod resource;
 mod search;
 mod wire;

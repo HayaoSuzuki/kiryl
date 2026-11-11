@@ -370,8 +370,8 @@ def test_timeout_cleans_worker_descendant_tree(tmp_path: Path) -> None:
         )
         assert result.returncode == 1, result.stderr
         child_pid = int(pid_file.read_text())
-        report = json.loads((tmp_path / "tree.json").read_text())
-        assert report["targets"][0]["report"]["capabilities"]["tree_cleanup"] is True
+        # Ordinary process-group cleanup is observable even when the backend
+        # conservatively disclaims hard cleanup of detached descendants.
         deadline = time.monotonic() + 2
         status = Path(f"/proc/{child_pid}/status")
         while (
@@ -444,3 +444,94 @@ def test_windows_timeout_cleans_descendant_job(tmp_path: Path) -> None:
         if pid_file.exists():
             with suppress(ProcessLookupError, PermissionError):
                 os.kill(int(pid_file.read_text()), signal.SIGTERM)
+
+
+def test_fixture_setup_error_retains_diagnostic_detail(tmp_path: Path) -> None:
+    """A pytest setup failure is infrastructure with the original diagnostic."""
+    project(
+        tmp_path,
+        """
+import pytest
+from hypothesis import given, strategies as st
+@pytest.fixture
+def broken():
+    raise RuntimeError("setup sentinel diagnostic")
+@given(st.integers())
+def test_setup(broken, n):
+    pass
+""",
+    )
+    result = invoke(
+        tmp_path,
+        "run",
+        "test_target.py",
+        "--best-effort",
+        "--duration",
+        "2",
+        "--store",
+        str(tmp_path / "store"),
+        "--report",
+        str(tmp_path / "setup.json"),
+    )
+    assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
+    report = json.loads((tmp_path / "setup.json").read_text())
+    outcomes = report["targets"][0]["report"]["outcomes"]
+    infrastructure = [item for item in outcomes if item["kind"] == "infrastructure"]
+    assert infrastructure
+    assert any("setup sentinel diagnostic" in item["detail"] for item in infrastructure)
+
+
+def test_collection_error_replaces_stale_success_report(tmp_path: Path) -> None:
+    """Collection failure atomically replaces a previous successful report."""
+    project(tmp_path, "raise RuntimeError('collection sentinel diagnostic')\n")
+    destination = tmp_path / "report.json"
+    destination.write_text('{"status":"success","stale":true}')
+    result = invoke(
+        tmp_path,
+        "run",
+        "test_target.py",
+        "--best-effort",
+        "--duration",
+        "2",
+        "--store",
+        str(tmp_path / "store"),
+        "--report",
+        str(destination),
+    )
+    assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
+    report = json.loads(destination.read_text())
+    assert report["status"] == "infrastructure"
+    assert "stale" not in report
+    assert report["infrastructure_errors"]
+
+
+def test_store_lock_failure_remains_visible_in_target_report(tmp_path: Path) -> None:
+    """An existing writer lock yields a target infrastructure record and detail."""
+    project(
+        tmp_path,
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_pass(n):\n    pass\n",
+    )
+    namespace = tmp_path / "store" / "target-0"
+    namespace.mkdir(parents=True)
+    lock = namespace / "writer.lock"
+    lock.write_text("existing owner")
+    result = invoke(
+        tmp_path,
+        "run",
+        "test_target.py",
+        "--best-effort",
+        "--duration",
+        "2",
+        "--store",
+        str(tmp_path / "store"),
+        "--report",
+        str(tmp_path / "locked.json"),
+    )
+    assert result.returncode == 2  # noqa: PLR2004 -- infrastructure exit
+    report = json.loads((tmp_path / "locked.json").read_text())
+    target = report["targets"][0]
+    assert target["status"] == "infrastructure"
+    assert target["report"]["outcomes"][0]["kind"] == "infrastructure"
+    assert target["report"]["outcomes"][0]["detail"]
+    assert lock.read_text() == "existing owner"

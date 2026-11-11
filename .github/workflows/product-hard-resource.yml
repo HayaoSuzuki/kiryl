@@ -69,7 +69,7 @@ jobs:
             echo 0 | sudo tee "$delegated/memory.swap.max" >/dev/null
           fi
           sudo mkdir "$delegated/controller"
-          sudo bash -c '
+          sudo --preserve-env=LD_LIBRARY_PATH bash -c '
             set -euo pipefail
             echo $$ > "$1/controller/cgroup.procs"
             cat /proc/self/cgroup > "$5/controller-membership-running.txt"
