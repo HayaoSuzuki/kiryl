@@ -1,0 +1,12 @@
+[package]
+name = "kiryl-scheduler-oracle-check"
+version = "0.0.0"
+edition = "2024"
+license = "Elastic-2.0"
+publish = false
+
+[dependencies]
+kiryl = { path = "../.." }
+
+[workspace]
+members = ["."]

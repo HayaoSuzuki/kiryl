@@ -27,9 +27,8 @@ cargo build --locked --workspace
 ```
 
 `rust-toolchain.toml` selects the same compiler for local development and CI.
-Commit `Cargo.lock` whenever dependencies change. The initial package is an
-empty library scaffold with publishing disabled; it has no third-party Rust
-dependencies and does not provide an executable yet.
+Commit `Cargo.lock` whenever dependencies change. The product package provides a checkout CLI with publishing disabled.
+See the user guide for pinned Python adapter dependencies and execution limits.
 
 Install [prek](https://prek.j178.dev/) and enable the local hooks:
 
@@ -50,8 +49,8 @@ cargo test --locked --workspace --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
 ```
 
-The Rust scaffold currently contains no behavioral tests. Add tests for actual
-behavior as implementation begins; a successful empty Rust suite only checks setup.
+Rust tests cover storage, transport, scheduler and budget behavior. Product
+Python tests include actual CLI subprocess scenarios after `cargo build`.
 The Python tooling tests exercise documentation validation. Run those and the
 strict user-site build using the [documentation procedure](documentation.md).
 
@@ -101,3 +100,22 @@ Use the [implementation plan](work/coverage-guided-python-fuzzing/feasibility-pl
 and [experimental workflow](../../.github/workflows/fuzzing-feasibility.yml) for
 its separate lockfiles and commands. These experiments do not install a product
 CLI or establish platform support merely by configuring the matrix.
+
+## Product adapter and CLI verification
+
+```sh
+uv sync --project python --frozen --python 3.14
+cargo build --locked
+uv run --project python --frozen --no-sync ruff check python
+uv run --project python --frozen --no-sync ruff format --check python
+uv run --project python --frozen --no-sync ty check --project python
+uv run --project python --frozen --no-sync pytest -c python/pyproject.toml python/tests
+lake -d formal build
+formal/.lake/build/bin/scheduler-oracle --check formal/scheduler-cases.tsv
+cargo run --locked --manifest-path formal/check/Cargo.toml
+```
+
+The product workflow separates the native matrix, Lean correspondence and finite
+scheduler fuzz campaign. See the [acceptance record](work/product-cli/acceptance-review.md)
+for local observations and unverified native hard-resource gates. Do not count
+best-effort execution as hard enforcement acceptance.

@@ -1,0 +1,10 @@
+name = "kiryl-product-model"
+version = "0.1.0"
+defaultTargets = ["SchedulerModel", "scheduler-oracle"]
+
+[[lean_lib]]
+name = "SchedulerModel"
+
+[[lean_exe]]
+name = "scheduler-oracle"
+root = "SchedulerOracle"

@@ -1,7 +1,7 @@
 //! Exclusive artifact storage preserving original bytes across worker failures.
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -34,10 +34,14 @@ impl ArtifactStore {
     /// # Errors
     /// Rejects malformed manifests, unknown schemas and changed identities.
     pub fn open_matching(root: &Path, identity: &serde_json::Value) -> io::Result<Self> {
+        let expected = serde_json::json!({"version": 1, "identity": identity});
+        let expected_bytes = serde_json::to_vec(&expected)?;
+        if expected_bytes.len() > 1024 * 1024 {
+            return Err(io::Error::other("manifest exceeds limits"));
+        }
         let store = Self::open(root)?;
         let path = store.root.join("manifest.json");
-        let expected = serde_json::json!({"version": 1, "identity": identity});
-        match fs::read(&path) {
+        match read_bounded(&path, 1024 * 1024) {
             Ok(bytes) => {
                 let actual: serde_json::Value = serde_json::from_slice(&bytes)?;
                 if actual != expected {
@@ -47,12 +51,12 @@ impl ArtifactStore {
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                if fs::read_dir(&store.root)?
-                    .any(|entry| entry.is_ok_and(|e| e.file_name() != "writer.lock"))
-                {
-                    return Err(io::Error::other("existing data has no compatible manifest"));
+                for entry in fs::read_dir(&store.root)? {
+                    if entry?.file_name() != "writer.lock" {
+                        return Err(io::Error::other("existing data has no compatible manifest"));
+                    }
                 }
-                store.publish_new("manifest.json", &serde_json::to_vec(&expected)?)?;
+                store.publish_new("manifest.json", &expected_bytes)?;
             }
             Err(error) => return Err(error),
         }
@@ -96,15 +100,12 @@ impl ArtifactStore {
     /// Rejects corrupt, oversized or incompatible input data.
     pub fn load_corpus(&self) -> io::Result<Vec<Vec<u8>>> {
         let path = self.root.join("corpus.json");
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
+        let bytes = match read_bounded(&path, 5 * 1024 * 1024) {
+            Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
             Err(error) => return Err(error),
         };
-        if file.metadata()?.len() > 5 * 1024 * 1024 {
-            return Err(io::Error::other("corpus file too large"));
-        }
-        let corpus: Vec<Vec<u8>> = serde_json::from_reader(file)?;
+        let corpus: Vec<Vec<u8>> = serde_json::from_slice(&bytes)?;
         Self::validate_corpus(&corpus)?;
         Ok(corpus)
     }
@@ -121,19 +122,91 @@ impl ArtifactStore {
                 .next
                 .checked_add(1)
                 .ok_or_else(|| io::Error::other("artifact IDs exhausted"))?;
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => {
-                    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-                        drop(file);
-                        let _ = fs::remove_file(&path);
-                        return Err(error);
-                    }
-                    return Ok(path);
-                }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| io::Error::other("invalid artifact filename"))?;
+            match self.publish_new(name, bytes) {
+                Ok(()) => return Ok(path),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.exists() => (),
                 Err(error) => return Err(error),
             }
         }
+    }
+    /// Atomically preserve the active input and its initial observation.
+    /// # Errors
+    /// Rejects empty/oversized test IDs, oversized inputs or records and write failures.
+    pub fn record_original(
+        &mut self,
+        test_id: &str,
+        input: &[u8],
+        observation: &serde_json::Value,
+    ) -> io::Result<String> {
+        if self.root.to_str().is_none() {
+            return Err(io::Error::other("artifact path is not UTF-8"));
+        }
+        if test_id.is_empty() || test_id.len() > 16 * 1024 || input.len() > 4096 {
+            return Err(io::Error::other("original metadata exceeds limits"));
+        }
+        let record = serde_json::json!({"version":1,"test_id":test_id,"input":input,"observation":observation});
+        let bytes = serde_json::to_vec(&record)?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(io::Error::other("original record exceeds limits"));
+        }
+        let path = self.save(&bytes, "finding")?;
+        path.into_os_string()
+            .into_string()
+            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
+    }
+    /// Append evidence linked to a validated structured original; never replace it.
+    /// # Errors
+    /// Rejects foreign paths, non-original records, unknown schemas and oversized evidence.
+    pub fn derived(&mut self, original: &str, evidence: &serde_json::Value) -> io::Result<String> {
+        let path = Path::new(original);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::other("invalid original path"))?;
+        if path.parent() != Some(self.root.as_path())
+            || name
+                .strip_prefix("finding-")
+                .and_then(|s| s.strip_suffix(".bin"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .is_none()
+            || !fs::symlink_metadata(path)?.is_file()
+        {
+            return Err(io::Error::other(
+                "expected structured original in this store",
+            ));
+        }
+        let record: serde_json::Value = serde_json::from_slice(&read_bounded(path, 1024 * 1024)?)?;
+        let test_id = record
+            .get("test_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty() && id.len() <= 16 * 1024)
+            .ok_or_else(|| io::Error::other("invalid original test metadata"))?;
+        let input: Vec<u8> = serde_json::from_value(
+            record
+                .get("input")
+                .cloned()
+                .ok_or_else(|| io::Error::other("missing original input"))?,
+        )?;
+        if record.get("version").and_then(serde_json::Value::as_u64) != Some(1)
+            || input.len() > 4096
+            || record.get("observation").is_none()
+        {
+            return Err(io::Error::other("incompatible original record"));
+        }
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":1,"original":name,"test_id":test_id,"evidence":evidence}),
+        )?;
+        if bytes.len() > 1024 * 1024 {
+            return Err(io::Error::other("derived evidence exceeds limits"));
+        }
+        self.save(&bytes, "evidence")?
+            .into_os_string()
+            .into_string()
+            .map_err(|_| io::Error::other("artifact path is not UTF-8"))
     }
     /// Save exact active input before attempting verification or shrinking.
     /// # Errors
@@ -170,4 +243,14 @@ impl Drop for ArtifactStore {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.lock);
     }
+}
+
+fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take((limit as u64) + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(io::Error::other("artifact file exceeds limits"));
+    }
+    Ok(bytes)
 }

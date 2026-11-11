@@ -13,6 +13,22 @@ sources:
 - id: crate
   resource: ../../../src/lib.rs
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
+- id: product-campaign
+  resource: ../../../src/campaign.rs
+  working_tree: modified
+  sha256: 3f0d0138abafc5224101cd21abda206f9be03dfcfbefc7a114a990645c7679b2
+- id: product-executor
+  resource: ../../../src/executor.rs
+  working_tree: modified
+  sha256: 78c7e36844088dff82098ec9b777fb58bf4957c97efb44fe1e4a252314c6d868
+- id: product-store
+  resource: ../../../src/artifacts.rs
+  working_tree: modified
+  sha256: b1849699d0fc4e18cb850788f3860a31ec4529b5d705d3f2b09042b598a2251f
+- id: product-python
+  resource: ../../../python/kiryl_adapter/worker.py
+  working_tree: modified
+  sha256: a997e9235fbe009135cf9d7b07af3086b63629a7c84654cc48df58c2fe25a61b
 ---
 # Selected direction
 
@@ -80,21 +96,45 @@ the product scope to make a candidate pass.[^proposal]
 [^plan]: [Feasibility implementation plan](../work/coverage-guided-python-fuzzing/feasibility-plan.md).
 [^crate]: [Scaffold library](../../../src/lib.rs), inspected at `5c4eccb43708bc115c83bc2f468c22758d73b5e1`.
 
-# Product implementation in progress
+# Product implementation and acceptance limits
 
-The [product implementation plan](../work/product-cli/implementation-plan.md)
-specializes Issue #5 into storage, executor/adapter, campaign/CLI, replay and
-acceptance work. The current Rust crate adds an initial exclusive-writer byte
-store; it does not yet implement versioned artifacts, environment identity,
-corpus persistence or a product CLI. Its lock is conservative: process death
-can leave a lock requiring manual inspection, and no automatic stale-lock
-recovery is promised. See the [progress record](../work/product-cli/progress.md)
-for partial checks and unresolved review findings. This does not establish the
-product acceptance matrix or adopt the experimental implementation wholesale.
+The product now exposes `run`, `replay` and `minimize` from a source checkout.
+Rust controls bounded search/corpus, equal exploration-time allocation, worker
+supervision and immutable original persistence. Separate Python modules own
+pytest collection/lifecycles, the pinned Hypothesis bridge and branch monitoring.
+This adopts the experiment's byte-mutation direction because it met the recorded
+feasibility gates without a Python extension ABI or an external engine dependency.
+No generic multi-engine interface or Atheris dependency was introduced.[^product-campaign][^product-executor][^product-python]
 
-The storage increment also provides caller-supplied identity comparison in a
-version-1 manifest and bounded corpus snapshots (256 entries, 4096 bytes per
-entry). These primitives do not compute source/environment identity or connect
-the corpus to a campaign. Mismatches preserve data. Local checks and the
-remaining platform/failure-injection limits are recorded in the same progress
-record; product acceptance remains pending.
+A single writer owns the campaign root. Per-target namespaces compare a versioned
+manifest containing target variant and caller-generated environment/source/config
+identity. Unsupported schemas and detected mismatches reject reuse without deleting
+originals. Corpus snapshots are bounded at 256 entries of up to 4096 bytes; original
+findings are never evicted with exploration corpus. Startup can leave conservative
+locks after process death; manual inspection is required before removal.[^product-store]
+
+Collection uses an attached child before importing project code. Worker control
+uses reserved descriptors independently of pytest capture and target output. Cases
+start timing after setup; campaign wall time includes collection/setup/verification.
+Fresh workers confirm fingerprints; interrupted shrink evidence is persisted as a
+separate pending derivative before confirmation. No confirmation follows merely
+from shrinking completion.[^product-executor][^product-python]
+
+The [implementation plan](../work/product-cli/implementation-plan.md),
+[storage reviews](../work/product-cli/storage-review.md),
+[acceptance evidence](../work/product-cli/acceptance-review.md), and
+[Python reviews](../../../python/REVIEW.md) record scoped local checks and remaining
+gates. Native macOS CPython 3.14 evidence does not establish all six matrix cells,
+Linux delegated-cgroup enforcement, Windows OOM observability or long-term performance.
+The product CI executes real CLI scenarios on the intended matrix; unexecuted jobs
+are not acceptance evidence. The [user guide](../../user/index.md) owns commands and
+actual prerequisite/limit explanations.
+
+Reconsider the adopted direction if replay semantics, corpus usefulness, bounded
+memory or measured IPC cost no longer satisfy the intended workload. Do not weaken
+resource or reproduction guarantees to count a platform as accepted.
+
+[^product-campaign]: [Product campaign](../../../src/campaign.rs).
+[^product-executor]: [Native executor](../../../src/executor.rs).
+[^product-store]: [Artifact store](../../../src/artifacts.rs).
+[^product-python]: [Python worker](../../../python/kiryl_adapter/worker.py).
