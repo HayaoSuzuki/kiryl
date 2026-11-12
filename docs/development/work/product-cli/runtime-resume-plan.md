@@ -125,3 +125,30 @@ the artificial blocked receive lasts sixty seconds. The unchanged exact-buffer
 assertion passes after the fix (8.15 s locally). The external fifteen-second
 subprocess watchdog still detects an indefinitely blocked parent. These changes
 adjust test preconditions, not product deadline or storage policy.
+
+## Replay-probe timing follow-up
+
+At 7990f98, every native product job, including real pytest 9.1.1 phases and the
+exact coverage union, passed. A separate macOS experiment produced unstable raw
+crash replay with a 150 ms case limit. A marker-controlled 300 ms delay on fresh
+synthetic crash execution reproduced the same unstable result locally before
+the fix. The raw replay table now distinguishes crash and hang budgets and also
+requires their literal native_crash/case_timeout labels, so merely confirming the
+wrong kind cannot pass.
+
+Positive finite-input probes have no unrelated default global deadline; their
+case allowance is five seconds and the external subprocess watchdog stays fifteen
+seconds. Tests of global/case expiry specify their own limits. Case expiry and
+campaign expiry are separate invocations rather than two unrelated cases in one
+function. A controlled four-second setup reproduced missing pending-original
+evidence under the old three-second budget; an eight-second window plus a long
+teardown now verifies actual post-failure cancellation.
+
+The final full experiment suite passes 185 tests with six native-only skips;
+strict Ruff ALL, formatting and ty pass. An independent read-only review of this
+bounded test diff found no Critical, Important or actionable Minor issues and
+confirmed the strengthened fault-kind, replay, liveness and pending-evidence
+oracles. It declined pending native execution, freedom from arbitrary host delays
+and descendant cleanup after an externally killed malfunctioning parent; the
+latter is unchanged. Product execution source is unchanged by these fixture-only
+corrections; final head checks still own whole-PR acceptance.

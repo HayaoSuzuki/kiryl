@@ -44,7 +44,7 @@ sources:
 - id: runtime-resume
   resource: ../work/product-cli/runtime-resume-plan.md
   working_tree: untracked
-  sha256: c49f01c2de6787421dd59a030a189830c6246a0ca33bc4eaaa91ea41f3a625fc
+  sha256: b654ccbeafb4e7e9fbe1be724ca83a5c01b87fe4bb0faeb25169936ffe891f27
 - id: runtime-admission
   resource: ../../../python/kiryl_adapter/runtime.py
   working_tree: modified
@@ -52,7 +52,7 @@ sources:
 - id: runtime-probes
   resource: ../../../experiments/python-fuzzing/tests/test_controller.py
   working_tree: modified
-  sha256: f2208af78566ee35cf1218d58dc0387897331dbda01fe08a837b00d80d00a711
+  sha256: 4b6c434c645c637d9e4a614a5309c65a45e25bf00429703563ced69e5569607d
 - id: runtime-matrix
   resource: ../../../.github/workflows/product-cli.yml
   working_tree: modified
@@ -357,3 +357,11 @@ execution constraints, not weaker supervision or coverage requirements.
 [^runtime-resume][^runtime-matrix][^runtime-probes]
 
 [^runtime-probes]: [Authored controller probes](../../../experiments/python-fuzzing/tests/test_controller.py).
+
+Replay probes distinguish a native crash from an intentionally short case timeout
+and require both the expected literal kind and fresh confirmation. Positive
+finite-input probes avoid unrelated global cancellation; explicit deadline cases
+retain explicit budgets and every subprocess retains its external watchdog.
+Controlled setup/replay delays validate the test preconditions before native
+execution. These fixture changes preserve product supervision and identity rules.
+[^runtime-resume][^runtime-probes]
