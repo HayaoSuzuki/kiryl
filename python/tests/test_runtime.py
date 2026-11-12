@@ -49,3 +49,20 @@ def test_disabled_gil_is_rejected() -> None:
         pytest.raises(RuntimeError, match="requires GIL CPython"),
     ):
         validate_runtime()
+
+
+@pytest.mark.parametrize("version", ["9.1.1", "9.2.0"])
+def test_explicit_supported_pytest_versions_are_admitted(version: str) -> None:
+    """Admission is independent of the checkout's default installation pin."""
+    with patch.object(pytest, "__version__", version):
+        validate_runtime()
+
+
+@pytest.mark.parametrize("version", ["9.1.0", "9.1.2", "9.3.0", "9.2.0rc1"])
+def test_untested_pytest_versions_remain_rejected(version: str) -> None:
+    """Supporting another known version does not accept an unverified range."""
+    with (
+        patch.object(pytest, "__version__", version),
+        pytest.raises(RuntimeError, match="pytest/Hypothesis"),
+    ):
+        validate_runtime()

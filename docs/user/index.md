@@ -14,8 +14,9 @@ uv sync --project python --frozen --python 3.14
 ```
 
 The adapter supports GIL-enabled CPython 3.14/3.15 with Hypothesis 6.170.13 and
-pytest 9.2.0. Version checks reject other runtimes before test dispatch. Install
-your project's dependencies in the selected interpreter as well. The native
+pytest 9.1.1 or 9.2.0. The checkout lock installs 9.2.0 by default; external
+project interpreters may use either explicitly supported version. Version checks
+reject other runtimes before test dispatch. Install your project's dependencies in the selected interpreter as well. The native
 product workflow tests the OS/interpreter matrix; a configured job alone is not
 proof of support. Recorded native hard-resource probes passed on Linux and Windows with both
 specified Python versions, including aggregate descendants and cleanup. The
@@ -72,10 +73,15 @@ state can still change results.
 
 Repeat the same run command and store path to seed a new campaign from the saved
 bounded corpus. This does not restore fixture state or Python execution position.
+Targets use lexicographic pytest node-ID order for equal-debt scheduling and
+`target-N` namespace assignment. Reordering the same collected target set does
+not change those bindings; no fixed collection seed is required for resume.
 The manifest rejects changed source/configuration, parameter target identity,
-detected interpreter/dependency identity, or incompatible storage schemas without
-deleting data. External services, native libraries and unrecorded environment
-state remain reproduction assumptions. Keep durable regression tests yourself.
+detected interpreter/dependency or controller/adapter implementation identity,
+or incompatible storage schemas without deleting data. Use a fresh store after an incompatible implementation or runtime
+change; existing originals are retained and are not automatically migrated.
+External services, native libraries and unrecorded environment state remain
+reproduction assumptions. Keep durable regression tests yourself.
 
 The JSON report identifies finding files. Originals contain exact input bytes,
 available rendered values, fingerprint and observation. Preserve these files;

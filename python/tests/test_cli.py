@@ -12,6 +12,7 @@ from contextlib import suppress
 from operator import itemgetter
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -725,3 +726,68 @@ def test_minimize_rejects_raw_crash_without_changing_original(tmp_path: Path) ->
     assert report["selection_complete"] is True
     assert "semantic minimization unavailable" in "\n".join(report["infrastructure_errors"])
     assert original.read_bytes() == before
+
+
+@pytest.fixture
+def reordered_campaign(tmp_path: Path) -> tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]:
+    """Exercise two phases of one resume lifecycle with unchanged source/config."""
+    project(
+        tmp_path,
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.integers())\ndef test_alpha(n): pass\n"
+        "@given(st.integers())\ndef test_zeta(n): pass\n",
+    )
+    (tmp_path / "conftest.py").write_text(
+        "import os\nimport pytest\n"
+        "@pytest.hookimpl(trylast=True)\n"
+        "def pytest_collection_modifyitems(items):\n"
+        "    items.sort(key=lambda item: item.nodeid, "
+        "reverse=os.environ.get('KIRYL_TEST_ORDER') == 'reverse')\n"
+    )
+    with patch.dict(os.environ, {"KIRYL_TEST_ORDER": "forward"}):
+        first = invoke(
+            tmp_path,
+            "run",
+            "test_target.py",
+            "--best-effort",
+            "--duration",
+            "12",
+            "--store",
+            str(tmp_path / "store"),
+            "--report",
+            str(tmp_path / "first.json"),
+        )
+    assert first.returncode in (0, 1), first.stderr
+    report = json.loads((tmp_path / "first.json").read_text())
+    with patch.dict(os.environ, {"KIRYL_TEST_ORDER": "reverse"}):
+        second = invoke(
+            tmp_path,
+            "run",
+            "test_target.py",
+            "--best-effort",
+            "--duration",
+            "12",
+            "--store",
+            str(tmp_path / "store"),
+            "--report",
+            str(tmp_path / "second.json"),
+        )
+    return report, second
+
+
+def test_resume_accepts_reordered_collection_with_unchanged_identity(
+    tmp_path: Path, reordered_campaign: tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]
+) -> None:
+    """Plugin ordering must not bind an existing namespace to a different node."""
+    first, result = reordered_campaign
+    assert result.returncode in (0, 1), result.stderr
+    resumed = json.loads((tmp_path / "second.json").read_text())
+    assert first["environment_identity"] == resumed["environment_identity"]
+    assert set(map(itemgetter("status"), first["targets"])) == {"searched"}
+    assert set(map(itemgetter("status"), resumed["targets"])) == {"searched"}
+    assert list(map(itemgetter("target"), resumed["targets"])) == [
+        "test_target.py::test_alpha",
+        "test_target.py::test_zeta",
+    ]
+    assert min(map(itemgetter("attempts"), resumed["targets"])) > 0
+    assert len(list((tmp_path / "store").glob("target-*/corpus.json"))) == len(resumed["targets"])

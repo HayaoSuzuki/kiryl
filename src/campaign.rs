@@ -86,6 +86,13 @@ struct InfrastructureOutcome {
     detail: String,
 }
 impl TargetProgress {
+    /// Canonical indices keep namespace identity independent of collection order.
+    /// Equal-debt targets therefore start in node-ID order on every invocation.
+    fn ordered(targets: &[String]) -> Vec<Self> {
+        let mut progress: Vec<_> = targets.iter().cloned().map(Self::new).collect();
+        progress.sort_by(|left, right| left.target.cmp(&right.target));
+        progress
+    }
     fn new(target: String) -> Self {
         Self {
             target,
@@ -169,12 +176,7 @@ impl TargetProgress {
 pub fn run(config: &CampaignConfig, interrupted: &Arc<AtomicBool>) -> io::Result<Value> {
     let _campaign_lock = crate::artifacts::ArtifactStore::open(&config.store)?;
     let started = Instant::now();
-    let mut targets: Vec<_> = config
-        .targets
-        .iter()
-        .cloned()
-        .map(TargetProgress::new)
-        .collect();
+    let mut targets = TargetProgress::ordered(&config.targets);
     let executor = Executor::new(Arc::clone(interrupted));
     while !interrupted.load(Ordering::Relaxed) {
         let remaining = config
@@ -360,6 +362,34 @@ mod tests {
             let mut target = TargetProgress::new("test_x".into());
             target.record(ExecutionReport { exploration_ms: exploration, replay_ms: replay, shrink_ms: shrink, ..ExecutionReport::default() }, 0);
             proptest::prop_assert_eq!(target.charged_ms(), exploration.max(1));
+        }
+    }
+    #[rstest::rstest]
+    #[case::reversed(vec!["test_z", "test_a"], vec!["test_a", "test_z"])]
+    #[case::parameter_ids(vec!["test_x[b]", "test_x[a]"], vec!["test_x[a]", "test_x[b]"])]
+    #[case::empty(vec![], vec![])]
+    fn target_namespaces_use_canonical_node_order(
+        #[case] input: Vec<&str>,
+        #[case] expected: Vec<&str>,
+    ) {
+        let ids: Vec<_> = input.into_iter().map(str::to_owned).collect();
+        let targets = TargetProgress::ordered(&ids);
+        let actual: Vec<_> = targets
+            .iter()
+            .map(|target| target.target.as_str())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn namespace_indices_are_invariant_under_target_permutations(ids in proptest::collection::btree_set("[a-z_]{1,16}", 1..20), rotation in proptest::prelude::any::<usize>()) {
+            let mut input: Vec<_> = ids.iter().rev().cloned().collect();
+            let shift = rotation % input.len();
+            input.rotate_left(shift);
+            let actual: Vec<_> = TargetProgress::ordered(&input).into_iter().map(|target| target.target).collect();
+            let expected: Vec<_> = ids.into_iter().collect();
+            proptest::prop_assert_eq!(actual, expected);
         }
     }
 }

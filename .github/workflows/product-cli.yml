@@ -92,6 +92,12 @@ jobs:
           "$product_binary" run test_smoke.py --python "$product_python" --best-effort --duration 5 --store "$smoke_root/store" --report "$product_evidence/smoke.json" || smoke_code=$?
           if (( smoke_code > 1 )); then exit "$smoke_code"; fi
           "$product_python" -c 'import json,sys; r=json.load(open(sys.argv[1], encoding="utf-8")); assert r["schema_version"] == 1; assert r["targets"]; assert r["targets"][0]["attempts"] > 0' "$product_evidence/smoke.json"
+      - name: Verify pytest 9.1.1 compatibility with real product execution
+        run: |
+          compatibility_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          uv pip install --python "$compatibility_python" pytest==9.1.1
+          "$compatibility_python" -c 'import pytest; assert pytest.__version__ == "9.1.1"'
+          "$compatibility_python" -m pytest -c python/pyproject.toml python/tests -q --junitxml=product-evidence/pytest-9.1.1.xml
       - name: Retain observations including failures
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

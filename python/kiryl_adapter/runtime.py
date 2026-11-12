@@ -4,7 +4,7 @@
 import sys
 
 HYPOTHESIS_VERSION = "6.170.13"
-PYTEST_VERSION = "9.2.0"
+SUPPORTED_PYTEST_VERSIONS = ("9.1.1", "9.2.0")
 
 
 def validate_runtime() -> None:
@@ -23,6 +23,9 @@ def validate_runtime() -> None:
     import hypothesis  # noqa: PLC0415 -- after stream/resource reservation
     import pytest  # noqa: PLC0415 -- after stream/resource reservation
 
-    if hypothesis.__version__ != HYPOTHESIS_VERSION or pytest.__version__ != PYTEST_VERSION:
+    if (
+        hypothesis.__version__ != HYPOTHESIS_VERSION
+        or pytest.__version__ not in SUPPORTED_PYTEST_VERSIONS
+    ):
         message = "unsupported pytest/Hypothesis runtime"
         raise RuntimeError(message)

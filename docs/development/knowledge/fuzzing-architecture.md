@@ -16,7 +16,7 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: 99c1502cc758ac43ea56532cf8fb12f8667fb24881feb73ba2088a56e4c35660
+  sha256: 67b0b057cf1eee5f824d4226a02c24b605c96a3410544531d9294a120de22316
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
@@ -41,6 +41,18 @@ sources:
   resource: ../../../src/verification.rs
   working_tree: modified
   sha256: c3530e563d93ae709f4b0b98129b86ab8a7e28cf3bb0eb6e938820108d4727e6
+- id: runtime-resume
+  resource: ../work/product-cli/runtime-resume-plan.md
+  working_tree: untracked
+  sha256: 739b8ab5b329f1c344c041cf72ca4cd992dc82f45ac2eaf1e9c0cf77fb05028a
+- id: runtime-admission
+  resource: ../../../python/kiryl_adapter/runtime.py
+  working_tree: modified
+  sha256: 6caba443e38f7477f51673ea378677721585325b62d7b9daef60870fe0ddbdc7
+- id: runtime-matrix
+  resource: ../../../.github/workflows/product-cli.yml
+  working_tree: modified
+  sha256: d8770e20908553a7efec2a81d0a67fa930a0cda167a35fb61af6ff2f98d41fec
 - id: target-scheduling
   resource: ../work/product-cli/target-scheduling-plan.md
   working_tree: untracked
@@ -309,3 +321,24 @@ keep one stored source of truth and the existing report/CLI contract.
 [^target-scheduling][^product-campaign]
 
 [^target-scheduling]: [Target-owned scheduling design and verification](../work/product-cli/target-scheduling-plan.md).
+
+Runtime admission distinguishes the tested compatibility set from the default
+checkout installation. Hypothesis remains exactly 6.170.13; pytest 9.1.1 and
+9.2.0 are admitted explicitly, while the lock continues to install 9.2.0. CI
+configures the complete real 9.1.1 product suite in each OS/interpreter cell after
+default-profile coverage collection. Configuring those phases is not evidence
+that they passed; current named-revision PR checks own that observation.
+[^runtime-admission][^runtime-matrix][^runtime-resume]
+
+Target construction canonicalizes exact node IDs before indexing, scheduling and
+namespace assignment. Thus reordering an unchanged collected set cannot bind a
+saved index to another target. Equal-debt ties start in lexicographic node-ID
+order. This adds no persistent mapping or storage schema: manifest identity checks
+remain unchanged, and mismatched source/runtime/implementation identities still
+reject reuse without deleting originals. Existing incompatible stores are not
+automatically migrated. Revisit this decision when target identifiers or namespace
+compatibility rules change.[^runtime-resume][^product-campaign]
+
+[^runtime-resume]: [Runtime compatibility and deterministic resume plan](../work/product-cli/runtime-resume-plan.md).
+[^runtime-admission]: [Explicit runtime admission](../../../python/kiryl_adapter/runtime.py).
+[^runtime-matrix]: [Native product and compatibility workflow](../../../.github/workflows/product-cli.yml).
