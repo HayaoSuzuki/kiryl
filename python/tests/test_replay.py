@@ -14,6 +14,7 @@ from adapter import Invocation, minimize, replay, run_session
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis_bridge import unpack_token
+from model import ResultKind, Verification
 
 
 @pytest.fixture
@@ -109,7 +110,7 @@ def discover(root: Path, name: str) -> bytes:
         [str(root / "test_findings.py"), "-q"],
         [Invocation(node, tuple(bytes([value]) * 2048 for value in range(99, 120)))],
     )
-    failures = [case for case in evidence.cases if case.kind == "failure"]
+    failures = [case for case in evidence.cases if case.kind == ResultKind.FAILURE]
     assert failures, evidence
     assert failures[0].replay_token is not None
     return failures[0].replay_token
@@ -129,7 +130,7 @@ def test_integer_semantic_shrinking_preserves_failure(finding_project: Path) -> 
     assert shrunk.complete is True
     assert published
     checked = replay(node, shrunk.best, args)
-    assert checked.kind == "failure"
+    assert checked.kind == ResultKind.FAILURE
     assert checked.fingerprint == observed.fingerprint
     assert shrunk.rendered is not None
     assert json.loads((finding_project / "integer.json").read_text()) < before_value
@@ -142,7 +143,7 @@ def test_stateful_semantic_shrinking(finding_project: Path) -> None:
     original = discover(finding_project, "TestAccumulator::runTest")
     before = json.loads((finding_project / "stateful.json").read_text())
     shrunk = minimize(node, original, 5.0, lambda _: None)
-    assert replay(node, shrunk.best, args).kind == "failure"
+    assert replay(node, shrunk.best, args).kind == ResultKind.FAILURE
     after = json.loads((finding_project / "stateful.json").read_text())
     assert (len(after), sum(after)) < (len(before), sum(before))
 
@@ -178,7 +179,7 @@ def test_no_database_and_zero_budget(finding_project: Path) -> None:
     assert shrunk.best == original
     assert shrunk.complete is False
     checked = replay(node, original, [str(finding_project / "test_findings.py"), "-q"])
-    assert checked.kind == "failure"
+    assert checked.kind == ResultKind.FAILURE
     assert checked.database_replay is False
 
 
@@ -218,11 +219,11 @@ def test_replay_of_state_dependent_failure_is_unstable(finding_project: Path) ->
         original,
         [str(finding_project / "test_findings.py"), "-q"],
     )
-    assert checked.kind == "pass"
-    assert checked.verification == "unstable"
+    assert checked.kind == ResultKind.PASS
+    assert checked.verification == Verification.UNSTABLE
     shrunk = minimize("test_findings.py::test_unstable", original, 1.0, lambda _: None)
     assert shrunk.best == original
-    assert shrunk.verification == "unstable"
+    assert shrunk.verification == Verification.UNSTABLE
 
 
 def test_acknowledgment_time_counts_against_shrink_budget(finding_project: Path) -> None:
@@ -246,7 +247,7 @@ def test_shrinking_does_not_switch_to_a_competing_failure(finding_project: Path)
     shrunk = minimize(node, original, 5.0, lambda _: None)
     checked = replay(node, shrunk.best, args)
     assert checked.fingerprint == observed.fingerprint
-    assert checked.verification == "confirmed"
+    assert checked.verification == Verification.CONFIRMED
 
 
 @settings(max_examples=75, deadline=None)
@@ -282,7 +283,7 @@ def test_unittest_setup_and_teardown_are_preserved(finding_project: Path) -> Non
         [str(finding_project / "test_findings.py"), "-q"],
         [Invocation("test_findings.py::TestUnit::test_property", (b"",))],
     )
-    assert list(map(attrgetter("kind"), evidence.cases)) == ["pass"]
+    assert list(map(attrgetter("kind"), evidence.cases)) == [ResultKind.PASS]
     assert (finding_project / "unit_teardown").exists()
 
 
@@ -301,4 +302,4 @@ def test_measured_ordinary_path_reuses_original_database(finding_project: Path, 
     )
     assert code == 1
     assert started
-    assert "failure" in set(map(attrgetter("kind"), observations))
+    assert ResultKind.FAILURE in set(map(attrgetter("kind"), observations))

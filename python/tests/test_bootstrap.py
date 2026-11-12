@@ -89,13 +89,14 @@ import io, os, sys
 import worker
 from wire import send
 from adapter import CaseResult
+from model import ResultKind
 original = os.dup(0)
 driver = worker.Driver(io.BytesIO())
 with open(os.devnull, "rb") as null:
     os.dup2(null.fileno(), 0)
 sys.stdin = io.StringIO("captured stdin")
 assert driver.next_case("test_target") == bytes([7])
-driver.observe(CaseResult("test_target", "pass"))
+driver.observe(CaseResult("test_target", ResultKind.PASS))
 os.close(original)
 """
     import io  # noqa: PLC0415 -- encode owned protocol input

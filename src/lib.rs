@@ -13,4 +13,6 @@ mod resource;
 mod search;
 mod wire;
 
-mod verification;
+pub mod verification;
+
+pub use resource::{BackendName, Capabilities};

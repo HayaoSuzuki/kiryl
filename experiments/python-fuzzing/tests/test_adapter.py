@@ -1,6 +1,7 @@
 # Copyright (c) 2026 kiryl contributors
 """Real pytest invocations: binding, scope resets, selection and classification."""
 
+from operator import attrgetter
 from pathlib import Path  # noqa: TC003 -- Hypothesis introspects test annotations
 from unittest.mock import patch
 
@@ -10,9 +11,11 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from adapter import CaseResult, Invocation, run_session
+from model import PytestPhase, ResultKind
 
 
-def test_scopes_and_parameter_binding(scopes: Path) -> None:
+@pytest.mark.parametrize(("scope", "count"), [("function", 3), ("module", 1), ("session", 1)])
+def test_scopes_and_parameter_binding(scopes: Path, scope: str, count: int) -> None:
     """Reset only at invocation boundaries and bind each parameter variant."""
     # Resetting per input, retaining function fixtures across invocations, or
     # binding variant b to a's values each breaks a different assertion here.
@@ -21,22 +24,24 @@ def test_scopes_and_parameter_binding(scopes: Path) -> None:
         [str(scopes), "-q", "-k", "test_bound"],
         [Invocation(a, (b"", b"")), Invocation(a, (b"",)), Invocation(b, (b"",))],
     )
-    assert evidence.selected == [a, b]
-    assert [case.kind for case in evidence.cases] == ["pass"] * 4
-    for scope, count in [("function", 3), ("module", 1), ("session", 1)]:
-        assert evidence.fixture_events.count((scope, "setup")) == count
-        assert evidence.fixture_events.count((scope, "teardown")) == count
+    assert set(evidence.selected) == {a, b}
+    assert list(map(attrgetter("kind"), evidence.cases)) == [ResultKind.PASS] * 4
+    assert evidence.fixture_events.count((scope, PytestPhase.SETUP)) == count
+    assert evidence.fixture_events.count((scope, PytestPhase.TEARDOWN)) == count
 
 
-def test_methods_expected_errors_and_rejection(scopes: Path) -> None:
-    """Keep receiver binding and rejection independent of expected exceptions."""
-    ids = [
-        "test_scopes.py::TestMethods::test_method",
-        "test_scopes.py::test_expected",
-        "test_scopes.py::test_reject",
-    ]
-    evidence = run_session([str(scopes), "-q"], [Invocation(node, (b"",)) for node in ids])
-    assert [case.kind for case in evidence.cases] == ["pass", "pass", "reject"]
+@pytest.mark.parametrize(
+    ("node", "kind"),
+    [
+        ("test_scopes.py::TestMethods::test_method", ResultKind.PASS),
+        ("test_scopes.py::test_expected", ResultKind.PASS),
+        ("test_scopes.py::test_reject", ResultKind.REJECT),
+    ],
+)
+def test_methods_expected_errors_and_rejection(scopes: Path, node: str, kind: ResultKind) -> None:
+    """Classify each supported method, expected exception, or rejected input."""
+    evidence = run_session([str(scopes), "-q"], [Invocation(node, (b"",))])
+    assert list(map(attrgetter("kind"), evidence.cases)) == [kind]
 
 
 def test_setup_error_has_no_generated_case(scopes: Path) -> None:
@@ -45,7 +50,7 @@ def test_setup_error_has_no_generated_case(scopes: Path) -> None:
         [str(scopes), "-q"], [Invocation("test_scopes.py::test_bad_setup", (b"",))]
     )
     assert len(evidence.cases) == 1
-    assert evidence.cases[0].kind == "infrastructure"
+    assert evidence.cases[0].kind == ResultKind.INFRASTRUCTURE
     assert evidence.cases[0].replay_token is None
 
 
@@ -55,24 +60,30 @@ def test_empty_supported_selection_fails(scopes: Path) -> None:
         run_session([str(scopes), "-k", "test_fixed", "-q"], [])
 
 
+class FeedbackDriver:
+    """Stream exactly one candidate and remember its observed feedback."""
+
+    def __init__(self) -> None:
+        """Start with no observed candidates."""
+        self.seen: list[ResultKind] = []
+
+    def next_case(self, nodeid: str) -> bytes | None:
+        """Stop requesting candidates after the first feedback arrives."""
+        assert nodeid == "test_scopes.py::test_expected"
+        return b"" if not self.seen else None
+
+    def observe(self, result: CaseResult) -> None:
+        """Record immediate feedback from the adapter."""
+        self.seen.append(result.kind)
+
+
 def test_driver_streams_feedback_between_cases(scopes: Path) -> None:
     """Deliver feedback before requesting the next candidate from Rust."""
     node = "test_scopes.py::test_expected"
 
-    class Driver:
-        def __init__(self) -> None:
-            self.seen: list[str] = []
-
-        def next_case(self, nodeid: str) -> bytes | None:
-            assert nodeid == node
-            return b"" if not self.seen else None
-
-        def observe(self, result: CaseResult) -> None:
-            self.seen.append(result.kind)
-
-    driver = Driver()
+    driver = FeedbackDriver()
     evidence = run_session([str(scopes), "-q"], [Invocation(node, ())], driver)
-    assert driver.seen == ["pass"]
+    assert driver.seen == [ResultKind.PASS]
     assert len(evidence.cases) == 1
 
 
@@ -80,7 +91,7 @@ def test_method_instance_is_new_per_invocation(scopes: Path) -> None:
     """Catch class-instance state accidentally retained across time slices."""
     node = "test_scopes.py::TestMethods::test_fresh_instance"
     evidence = run_session([str(scopes), "-q"], [Invocation(node, (b"",))] * 2)
-    assert [case.kind for case in evidence.cases] == ["pass", "pass"]
+    assert list(map(attrgetter("kind"), evidence.cases)) == [ResultKind.PASS, ResultKind.PASS]
 
 
 def test_unknown_selected_target_is_an_error(scopes: Path) -> None:
@@ -97,6 +108,11 @@ def test_collection_failure_is_not_empty_selection(tmp_path: Path) -> None:
         run_session([str(target), "-q"], [])
 
 
+def bound_invocation(tag: str) -> Invocation:
+    """Translate a generated parameter schedule entry into one invocation."""
+    return Invocation(f"test_scopes.py::test_bound[{tag}]", (b"", b""))
+
+
 @settings(
     max_examples=12,
     deadline=None,
@@ -110,11 +126,11 @@ def test_parameter_invocation_sequences_do_not_leak_fixture_state(
     """Exercise arbitrary parameter schedules against real fixture lifecycles."""
     evidence = run_session(
         [str(scopes), "-q"],
-        [Invocation(f"test_scopes.py::test_bound[{tag}]", (b"", b"")) for tag in tags],
+        list(map(bound_invocation, tags)),
     )
-    assert [case.kind for case in evidence.cases] == ["pass"] * (2 * len(tags))
-    assert evidence.fixture_events.count(("function", "setup")) == len(tags)
-    assert evidence.fixture_events.count(("function", "teardown")) == len(tags)
+    assert list(map(attrgetter("kind"), evidence.cases)) == [ResultKind.PASS] * (2 * len(tags))
+    assert evidence.fixture_events.count(("function", PytestPhase.SETUP)) == len(tags)
+    assert evidence.fixture_events.count(("function", PytestPhase.TEARDOWN)) == len(tags)
 
 
 def test_unsupported_hypothesis_version_is_infrastructure(
@@ -125,7 +141,7 @@ def test_unsupported_hypothesis_version_is_infrastructure(
         evidence = run_session(
             [str(scopes), "-q"], [Invocation("test_scopes.py::test_expected", (b"",))]
         )
-    assert [case.kind for case in evidence.cases] == ["infrastructure"]
+    assert list(map(attrgetter("kind"), evidence.cases)) == [ResultKind.INFRASTRUCTURE]
     assert evidence.cases[0].rendered is not None
     assert "unsupported Hypothesis" in evidence.cases[0].rendered
 
@@ -138,7 +154,7 @@ def test_async_property_is_explicitly_unsupported(tmp_path: Path) -> None:
         "@given(st.just(0))\nasync def test_async(value):\n    assert False\n"
     )
     evidence = run_session([str(tmp_path), "-q"], [Invocation("test_async.py::test_async", (b"",))])
-    assert evidence.cases[0].kind == "infrastructure"
+    assert evidence.cases[0].kind == ResultKind.INFRASTRUCTURE
     assert "async" in (evidence.cases[0].rendered or "")
 
 
@@ -157,4 +173,4 @@ def test_hypothesis_configuration_exception_is_infrastructure(
     evidence = run_session(
         [str(tmp_path), "-q"], [Invocation(f"test_cfg_{exception}.py::test_configuration", (b"",))]
     )
-    assert evidence.cases[0].kind == "infrastructure"
+    assert evidence.cases[0].kind == ResultKind.INFRASTRUCTURE

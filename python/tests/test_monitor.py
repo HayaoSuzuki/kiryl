@@ -18,6 +18,7 @@ import pytest
 from adapter import Invocation, replay, run_session
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from model import ResultKind, Verification
 from monitor import BranchMonitor
 
 
@@ -367,12 +368,12 @@ def test_fresh_replay_preserves_adapter_identity_for_fixture_stash(scopes: Path)
     node = "test_scopes.py::test_fixture_failure"
     args = [str(scopes), "-q"]
     evidence = run_session(args, [Invocation(node, (b"",))])
-    assert evidence.cases[0].kind == "failure"
+    assert evidence.cases[0].kind == ResultKind.FAILURE
     token = evidence.cases[0].replay_token
     assert token is not None
     checked = replay(node, token, args)
-    assert checked.kind == "failure", checked.rendered
-    assert checked.verification == "confirmed"
+    assert checked.kind == ResultKind.FAILURE, checked.rendered
+    assert checked.verification == Verification.CONFIRMED
 
 
 @pytest.fixture

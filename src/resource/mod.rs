@@ -19,11 +19,24 @@ mod windows;
 
 pub type ResourceError = io::Error;
 
+/// Native containment identity. Its spelling belongs only to serialized reports.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum BackendName {
+    #[serde(rename = "portable")]
+    Portable,
+    #[cfg(target_os = "linux")]
+    #[serde(rename = "cgroup-v2")]
+    CgroupV2,
+    #[cfg(windows)]
+    #[serde(rename = "job-object")]
+    JobObject,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Capabilities {
     pub tree_memory_hard: bool,
     pub tree_cleanup: bool,
-    pub backend: String,
+    pub backend: BackendName,
     pub oom_evidence_complete: bool,
     pub reason: Option<String>,
 }
@@ -32,17 +45,17 @@ impl Capabilities {
         Self {
             tree_memory_hard: false,
             tree_cleanup: false,
-            backend: "portable".into(),
+            backend: BackendName::Portable,
             oom_evidence_complete: false,
             reason: Some(reason),
         }
     }
     #[cfg(any(target_os = "linux", windows))]
-    fn hard(backend: &str) -> Self {
+    fn hard(backend: BackendName) -> Self {
         Self {
             tree_memory_hard: true,
             tree_cleanup: true,
-            backend: backend.into(),
+            backend,
             oom_evidence_complete: cfg!(target_os = "linux"),
             reason: None,
         }
@@ -98,9 +111,9 @@ impl Guard {
     pub fn capabilities(&self) -> Capabilities {
         match &self.backend {
             #[cfg(target_os = "linux")]
-            Backend::Linux(_) => Capabilities::hard("cgroup-v2"),
+            Backend::Linux(_) => Capabilities::hard(BackendName::CgroupV2),
             #[cfg(windows)]
-            Backend::Windows(_) => Capabilities::hard("job-object"),
+            Backend::Windows(_) => Capabilities::hard(BackendName::JobObject),
             Backend::Portable(group) => Capabilities::portable(group.reason.clone()),
         }
     }
@@ -259,6 +272,24 @@ mod windows_probe_tests {
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             ["/D", "/C", "set /p kiryl_capability_probe="]
+        );
+    }
+}
+
+#[cfg(test)]
+mod backend_contract_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_backend_retains_typed_identity_and_wire_capabilities() {
+        let capabilities = Capabilities::portable("no delegated backend".into());
+        assert_eq!(capabilities.backend, BackendName::Portable);
+        assert_eq!(
+            serde_json::to_value(capabilities).unwrap(),
+            serde_json::json!({
+                "tree_memory_hard":false,"tree_cleanup":false,"backend":"portable",
+                "oom_evidence_complete":false,"reason":"no delegated backend"
+            })
         );
     }
 }

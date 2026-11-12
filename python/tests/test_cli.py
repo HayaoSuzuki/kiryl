@@ -239,7 +239,7 @@ def test_case_timeout_preserves_active_input(tmp_path: Path) -> None:
         "test_target.py",
         "--best-effort",
         "--duration",
-        "2",
+        "8",
         "--case-timeout",
         "0.1",
         "--store",

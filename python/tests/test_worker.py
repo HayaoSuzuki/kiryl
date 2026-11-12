@@ -18,6 +18,7 @@ import pytest
 import runtime
 import worker
 from adapter import CaseResult, SessionEvidence
+from model import ResultKind
 from wire import receive, send
 from worker import Driver, _bootstrap, _dispatch
 
@@ -150,9 +151,11 @@ def acknowledged_driver(
     return driver, output
 
 
-@pytest.mark.parametrize(("kind", "frame_kind"), [("pass", "result"), ("skip", "skipped")])
+@pytest.mark.parametrize(
+    ("kind", "frame_kind"), [(ResultKind.PASS, "result"), (ResultKind.SKIP, "skipped")]
+)
 def test_driver_serializes_observation_bytes(
-    acknowledged_driver: tuple[Driver, io.BytesIO], kind: str, frame_kind: str
+    acknowledged_driver: tuple[Driver, io.BytesIO], kind: ResultKind, frame_kind: str
 ) -> None:
     """Byte fields become JSON arrays while skip outcomes retain their frame type."""
     driver, output = acknowledged_driver
@@ -181,7 +184,7 @@ def test_driver_rejects_missing_finding_ack(
     driver, incoming, _ = driver_transport
     queue(incoming, {"kind": "end"})
     with pytest.raises(ValueError, match="finding acknowledgment"):
-        driver.observe(CaseResult("target", "pass"))
+        driver.observe(CaseResult("target", ResultKind.PASS))
 
 
 @pytest.fixture
@@ -200,9 +203,9 @@ def dispatch_transport(
     return driver, io.BytesIO()
 
 
-@pytest.mark.parametrize("kind", ["pass", "infrastructure"])
+@pytest.mark.parametrize("kind", [ResultKind.PASS, ResultKind.INFRASTRUCTURE])
 def test_dispatch_run_reports_infrastructure(
-    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack, kind: str
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack, kind: ResultKind
 ) -> None:
     """Each completed run sends done, and infrastructure receives its own error frame."""
     _, output = dispatch_transport
@@ -245,7 +248,7 @@ def replay_case(
     assert token == b"\x01"
     assert args == []
     before()
-    return CaseResult(nodeid, "failure")
+    return CaseResult(nodeid, ResultKind.FAILURE)
 
 
 def shrink_case(
@@ -365,7 +368,7 @@ def test_main_reports_skip_from_dispatch(
         )
     )
     worker.main()
-    driver.observe.assert_called_once_with(CaseResult("target", "skip"))
+    driver.observe.assert_called_once_with(CaseResult("target", ResultKind.SKIP))
     output.seek(0)
     assert receive(output)["kind"] == "done"
 
@@ -505,3 +508,21 @@ def test_resource_limit_spec_exists_without_native_module() -> None:
     """The documented signature permits bootstrap tests on hosts without resource."""
     with patch.dict(sys.modules, {"resource": None}):
         assert resource_limit_api() is ResourceLimitAPI.setrlimit
+
+
+def test_infrastructure_diagnostic_preserves_wire_state_labels(
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack
+) -> None:
+    """Human diagnostics expose stable outcome labels after typed execution."""
+    _, output = dispatch_transport
+    run = create_autospec(
+        adapter.run_session,
+        spec_set=True,
+        return_value=SessionEvidence(cases=[CaseResult("target", ResultKind.INFRASTRUCTURE)]),
+    )
+    patches.enter_context(patch.object(adapter, "run_session", run))
+    _dispatch(output, {"test_id": "target", "pytest_args": []})
+    output.seek(0)
+    message = receive(output)
+    assert "'kind': 'infrastructure'" in str(message["message"])
+    assert "'verification': 'pending'" in str(message["message"])

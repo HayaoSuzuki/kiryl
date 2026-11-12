@@ -1,4 +1,5 @@
 //! Finding presentation owns user-facing values and replay command construction.
+use crate::executor::{OutcomeKind, Reproduction};
 use serde_json::{Value, json};
 use std::{io, path::Path};
 
@@ -43,8 +44,8 @@ fn annotate(
         let description = crate::artifacts::describe_original(Path::new(&path))?;
         outcome["input_values"] = json!(description.rendered);
         outcome["failure_fingerprint"] = json!(description.fingerprint);
-        for command in ["replay", "minimize"] {
-            if command == "minimize" && !description.replayable {
+        for command in [Reproduction::Replay, Reproduction::Minimize] {
+            if command == Reproduction::Minimize && !description.replayable {
                 continue;
             }
             let mut args = vec![
@@ -73,7 +74,11 @@ fn annotate(
                     ),
                 ]);
             }
-            outcome[format!("{command}_command")] = json!(args);
+            let key = match command {
+                Reproduction::Replay => "replay_command",
+                Reproduction::Minimize => "minimize_command",
+            };
+            outcome[key] = json!(args);
         }
     }
     Ok(())
@@ -106,18 +111,24 @@ impl Completion {
 }
 /// Classify a recorded observation without forgetting an unresolved active input.
 #[must_use]
-pub fn completion(kind: &str, has_original: bool) -> Completion {
+pub fn completion(kind: &OutcomeKind, has_original: bool) -> Completion {
     match kind {
-        "infrastructure" => Completion::Infrastructure,
-        "campaign_cancelled" if has_original => Completion::Finding,
-        "pass" | "reject" | "skip" | "campaign_cancelled" => Completion::Clean,
+        OutcomeKind::Infrastructure => Completion::Infrastructure,
+        OutcomeKind::CampaignCancelled if has_original => Completion::Finding,
+        OutcomeKind::Pass
+        | OutcomeKind::Reject
+        | OutcomeKind::Skip
+        | OutcomeKind::CampaignCancelled => Completion::Clean,
         _ => Completion::Finding,
     }
 }
 /// A terminal target no longer receives slices; expiry alone does not stop it.
 #[must_use]
-pub fn stops_search(kind: &str) -> bool {
-    !matches!(kind, "pass" | "reject" | "campaign_cancelled")
+pub fn stops_search(kind: &OutcomeKind) -> bool {
+    !matches!(
+        kind,
+        OutcomeKind::Pass | OutcomeKind::Reject | OutcomeKind::CampaignCancelled
+    )
 }
 /// Read either report shape through one outcome/exit contract.
 #[must_use]
@@ -129,13 +140,15 @@ fn report_completion(report: &Value) -> Completion {
         return Completion::Interrupted;
     }
     let mut result = Completion::Clean;
-    if report["status"] == "infrastructure" {
+    if report["status"].as_str().map(OutcomeKind::from) == Some(OutcomeKind::Infrastructure) {
         result = Completion::Infrastructure;
     }
     if let Some(outcomes) = report["outcomes"].as_array() {
         for outcome in outcomes {
             result = result.combine(completion(
-                outcome["kind"].as_str().unwrap_or("infrastructure"),
+                &outcome["kind"]
+                    .as_str()
+                    .map_or(OutcomeKind::Infrastructure, OutcomeKind::from),
                 !outcome["original"].is_null(),
             ));
         }
@@ -162,9 +175,9 @@ pub fn record_error(
         _ => Completion::Infrastructure,
     };
     context["status"] = json!(match completion {
-        Completion::Interrupted => "interrupted",
-        Completion::Clean => "campaign_cancelled",
-        Completion::Infrastructure | Completion::Finding => "infrastructure",
+        Completion::Interrupted => OutcomeKind::Interrupted,
+        Completion::Clean => OutcomeKind::CampaignCancelled,
+        Completion::Infrastructure | Completion::Finding => OutcomeKind::Infrastructure,
     });
     context["interrupted"] = json!(completion == Completion::Interrupted);
     context["elapsed_ms"] = json!(elapsed.as_millis());

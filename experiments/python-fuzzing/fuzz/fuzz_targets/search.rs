@@ -1,6 +1,6 @@
 // Copyright (c) 2026 kiryl contributors
 #![no_main]
-use fuzz_probe::{controller::Observation, search::Search};
+use fuzz_probe::{controller::Observation, search::Search, types::OutcomeKind};
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|bytes: &[u8]| {
     let mut search = Search::new(0);
@@ -10,7 +10,7 @@ fuzz_target!(|bytes: &[u8]| {
         let prior = search.corpus_len();
         let valid = chunk.first().is_some_and(|b| b & 1 == 1);
         let observation = Observation {
-            kind: if valid { "pass" } else { "reject" }.into(),
+            kind: if valid { OutcomeKind::Pass } else { OutcomeKind::Reject },
             canonical: Some(chunk.to_vec()),
             features: vec![format!("{chunk:?}")],
             ..Observation::default()

@@ -36,10 +36,10 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
         outcomes: vec![Outcome {
             test_id: String::new(),
             case_id: 0,
-            kind: "infrastructure".into(),
+            kind: fuzz_probe::types::OutcomeKind::Infrastructure,
             original: None,
             derived: vec![],
-            verification: "pending".into(),
+            verification: fuzz_probe::types::Verification::Pending,
             detail: Some(error.to_string()),
         }],
         ..ProbeReport::default()

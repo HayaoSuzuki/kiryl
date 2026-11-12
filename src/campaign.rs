@@ -1,5 +1,5 @@
 //! Equal-time allocation: charge actual slice wall time, including cooperative overrun.
-use crate::executor::{ExecutionReport, ExecutionSettings, Executor, Limits, LogTail};
+use crate::executor::{ExecutionReport, ExecutionSettings, Executor, Limits, LogTail, OutcomeKind};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -46,7 +46,7 @@ struct TargetProgress {
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-enum TargetStatus {
+pub(crate) enum TargetStatus {
     Unexecuted,
     Searched,
     Stopped,
@@ -75,7 +75,7 @@ enum SliceSnapshot {
 }
 #[derive(serde::Serialize)]
 struct InfrastructureOutcome {
-    kind: &'static str,
+    kind: OutcomeKind,
     detail: String,
 }
 impl TargetProgress {
@@ -133,7 +133,7 @@ impl TargetProgress {
         self.status = TargetStatus::Infrastructure;
         self.report = Some(SliceSnapshot::Error {
             outcomes: [InfrastructureOutcome {
-                kind: "infrastructure",
+                kind: OutcomeKind::Infrastructure,
                 detail,
             }],
         });

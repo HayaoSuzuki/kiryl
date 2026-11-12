@@ -1,7 +1,7 @@
 //! Product command transaction: discovery, admission, execution and presentation.
 use crate::{
     artifacts::ReplayContext,
-    campaign::{self, CampaignConfig},
+    campaign::{self, CampaignConfig, TargetStatus},
     executor::{ExecutionSettings, Executor, Limits, Reproduction},
 };
 use serde_json::{Value, json};
@@ -107,7 +107,7 @@ pub fn execute(
         discovered
             .targets()
             .iter()
-            .map(|target| json!({"target":target,"status":"unexecuted"}))
+            .map(|target| json!({"target":target,"status":TargetStatus::Unexecuted}))
             .collect::<Vec<_>>()
     );
     context["selection_complete"] = json!(discovered.selection_complete());

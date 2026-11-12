@@ -1,5 +1,8 @@
 // Copyright (c) 2026 kiryl contributors
 //! One-worker probe: Rust owns input, time, persistence and bounded output.
+use crate::types::{
+    IncomingKind, OutcomeKind, OutgoingFrame, ReportMode, Verification, WorkerMode,
+};
 use crate::{artifacts::ArtifactStore, resource, search::Search, wire};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -81,23 +84,23 @@ fn enabled() -> bool {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Observation {
-    pub kind: String,
+    pub kind: OutcomeKind,
     pub canonical: Option<Vec<u8>>,
     pub fingerprint: Option<String>,
     pub replay_token: Option<Vec<u8>>,
     pub rendered: Option<String>,
     pub features: Vec<String>,
-    pub verification: String,
+    pub verification: Verification,
     pub elapsed_ns: u64,
 }
 #[derive(Debug, Serialize)]
 pub struct Outcome {
     pub test_id: String,
     pub case_id: u64,
-    pub kind: String,
+    pub kind: OutcomeKind,
     pub original: Option<String>,
     pub derived: Vec<String>,
-    pub verification: String,
+    pub verification: Verification,
     pub detail: Option<String>,
 }
 #[derive(Debug, Default, Serialize)]
@@ -129,7 +132,7 @@ pub struct ProbeReport {
     pub elapsed_ms: u128,
     pub capabilities: Value,
     pub environment: Value,
-    pub mode: String,
+    pub mode: ReportMode,
     pub seed: u64,
     pub branches: usize,
     pub corpus_entries: usize,
@@ -145,27 +148,32 @@ impl ProbeReport {
     pub fn exit_code(&self) -> i32 {
         if self.interrupted {
             130
-        } else if self.outcomes.iter().any(|o| o.kind == "infrastructure") {
+        } else if self
+            .outcomes
+            .iter()
+            .any(|o| o.kind == OutcomeKind::Infrastructure)
+        {
             2
         } else {
-            i32::from(
-                self.outcomes
-                    .iter()
-                    .any(|o| !["pass", "reject", "skip"].contains(&o.kind.as_str())),
-            )
+            i32::from(self.outcomes.iter().any(|o| {
+                !matches!(
+                    o.kind,
+                    OutcomeKind::Pass | OutcomeKind::Reject | OutcomeKind::Skip
+                )
+            }))
         }
     }
 }
 
 /// Deterministic budget precedence shared by live supervision and model tests.
 #[must_use]
-pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<&'static str> {
+pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<OutcomeKind> {
     if interrupted {
-        Some("interrupted")
+        Some(OutcomeKind::Interrupted)
     } else if campaign {
-        Some("campaign_cancelled")
+        Some(OutcomeKind::CampaignCancelled)
     } else if case {
-        Some("case_timeout")
+        Some(OutcomeKind::CaseTimeout)
     } else {
         None
     }
@@ -281,7 +289,8 @@ impl Worker {
             cleanup_error: None,
         })
     }
-    fn enqueue(&mut self, value: Value) {
+    fn enqueue(&mut self, frame: OutgoingFrame<'_>) {
+        let value = json!(frame);
         let result = self
             .input
             .as_ref()
@@ -313,6 +322,50 @@ impl Drop for Worker {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionMode {
+    Run,
+    RawReplay,
+    Replay,
+    Minimize,
+    Baseline,
+}
+impl SessionMode {
+    fn wire(self) -> WorkerMode {
+        match self {
+            Self::Run | Self::RawReplay => WorkerMode::Run,
+            Self::Replay => WorkerMode::Replay,
+            Self::Minimize => WorkerMode::Minimize,
+            Self::Baseline => WorkerMode::Baseline,
+        }
+    }
+}
+/// Couples semantic operations to the required opaque token, including empty tokens.
+#[derive(Clone, Copy)]
+enum SessionOperation<'a> {
+    Run,
+    RawReplay,
+    Replay(&'a [u8]),
+    Minimize(&'a [u8]),
+    Baseline,
+}
+impl SessionOperation<'_> {
+    fn mode(&self) -> SessionMode {
+        match self {
+            Self::Run => SessionMode::Run,
+            Self::RawReplay => SessionMode::RawReplay,
+            Self::Replay(_) => SessionMode::Replay,
+            Self::Minimize(_) => SessionMode::Minimize,
+            Self::Baseline => SessionMode::Baseline,
+        }
+    }
+    fn token(&self) -> Option<&[u8]> {
+        match self {
+            Self::Replay(token) | Self::Minimize(token) => Some(token),
+            _ => None,
+        }
+    }
+}
 struct RunResult {
     observation: Option<Observation>,
     original: Option<String>,
@@ -349,15 +402,14 @@ impl Controller {
         let mut report = ProbeReport {
             version: 1,
             mode: if config.baseline {
-                "hypothesis"
+                ReportMode::Hypothesis
             } else if config.search && config.feedback {
-                "guided"
+                ReportMode::Guided
             } else if config.search {
-                "unguided"
+                ReportMode::Unguided
             } else {
-                "fixed"
-            }
-            .into(),
+                ReportMode::Fixed
+            },
             seed: config.seed,
             capabilities: serde_json::to_value(resource::detect()).map_err(io::Error::from)?,
             ..ProbeReport::default()
@@ -366,10 +418,10 @@ impl Controller {
             report.outcomes.push(Outcome {
                 test_id: String::new(),
                 case_id: 0,
-                kind: "infrastructure".into(),
+                kind: OutcomeKind::Infrastructure,
                 original: None,
                 derived: vec![],
-                verification: "hard memory backend unavailable".into(),
+                verification: Verification::Diagnostic("hard memory backend unavailable".into()),
                 detail: None,
             });
             return Ok(report);
@@ -396,8 +448,11 @@ impl Controller {
                     &config,
                     invocation,
                     offset,
-                    if config.baseline { "baseline" } else { "run" },
-                    None,
+                    if config.baseline {
+                        SessionOperation::Baseline
+                    } else {
+                        SessionOperation::Run
+                    },
                     start,
                     &mut store,
                     &mut report,
@@ -411,7 +466,7 @@ impl Controller {
                         .iter()
                         .rposition(|o| o.original == result.original && o.kind == observed.kind)
                         .unwrap_or_else(|| report.outcomes.len().saturating_sub(1));
-                    if observed.kind == "failure"
+                    if observed.kind == OutcomeKind::Failure
                         && let (Some(token), Some(original)) =
                             (&observed.replay_token, &result.original)
                         && !self.cancelled(&config, start)
@@ -421,8 +476,7 @@ impl Controller {
                             &config,
                             invocation,
                             0,
-                            "replay",
-                            Some(token),
+                            SessionOperation::Replay(token),
                             start,
                             &mut store,
                             &mut report,
@@ -432,8 +486,7 @@ impl Controller {
                         let verification = verified
                             .observation
                             .as_ref()
-                            .map_or("pending", |o| o.verification.as_str())
-                            .to_owned();
+                            .map_or(Verification::Pending, |o| o.verification.clone());
                         report.outcomes[index]
                             .verification
                             .clone_from(&verification);
@@ -443,14 +496,15 @@ impl Controller {
                                 .map_err(ProbeError::Storage)?;
                             report.outcomes[index].derived.push(path);
                         }
-                        if verification == "confirmed" && !self.cancelled(&config, start) {
+                        if verification == Verification::Confirmed
+                            && !self.cancelled(&config, start)
+                        {
                             let shrink_start = Instant::now();
                             let shrunk = self.session(
                                 &config,
                                 invocation,
                                 0,
-                                "minimize",
-                                Some(token),
+                                SessionOperation::Minimize(token),
                                 start,
                                 &mut store,
                                 &mut report,
@@ -466,8 +520,10 @@ impl Controller {
                             }
                         }
                     }
-                    if ["native_crash", "case_timeout"].contains(&observed.kind.as_str())
-                        && let Some(original) = &result.original
+                    if matches!(
+                        observed.kind,
+                        OutcomeKind::NativeCrash | OutcomeKind::CaseTimeout
+                    ) && let Some(original) = &result.original
                         && !self.cancelled(&config, start)
                     {
                         let replay_invocation = Invocation {
@@ -478,27 +534,31 @@ impl Controller {
                             &config,
                             &replay_invocation,
                             0,
-                            "raw_replay",
-                            None,
+                            SessionOperation::RawReplay,
                             start,
                             &mut store,
                             &mut report,
                             &mut None,
                         )?;
                         let status = if verification.observation.as_ref().is_none_or(|v| {
-                            ["campaign_cancelled", "interrupted", "infrastructure"]
-                                .contains(&v.kind.as_str())
+                            matches!(
+                                v.kind,
+                                OutcomeKind::CampaignCancelled
+                                    | OutcomeKind::Interrupted
+                                    | OutcomeKind::Infrastructure
+                            )
                         }) {
-                            "pending"
+                            Verification::Pending
                         } else if verification.observation.as_ref().is_some_and(|v| {
                             v.kind == observed.kind
-                                && (v.kind != "native_crash" || v.rendered == observed.rendered)
+                                && (v.kind != OutcomeKind::NativeCrash
+                                    || v.rendered == observed.rendered)
                         }) {
-                            "confirmed"
+                            Verification::Confirmed
                         } else {
-                            "unstable"
+                            Verification::Unstable
                         };
-                        report.outcomes[index].verification = status.into();
+                        report.outcomes[index].verification = status.clone();
                         let evidence = json!({"mode": "raw_replay", "input": result.retained_input, "verification": status, "observation": verification.observation});
                         report.outcomes[index].derived.push(
                             store
@@ -541,13 +601,14 @@ impl Controller {
         config: &ProbeConfig,
         invocation: &Invocation,
         offset: usize,
-        mode: &str,
-        token: Option<&Vec<u8>>,
+        operation: SessionOperation<'_>,
         campaign_start: Instant,
         store: &mut ArtifactStore,
         report: &mut ProbeReport,
         search: &mut Option<Search>,
     ) -> Result<RunResult, ProbeError> {
+        let mode = operation.mode();
+        let token = operation.token();
         let mut worker = match Worker::launch(config) {
             Ok(worker) => worker,
             Err(error) => {
@@ -558,7 +619,7 @@ impl Controller {
                     kind: observation.kind.clone(),
                     original: None,
                     derived: vec![],
-                    verification: "pending".into(),
+                    verification: Verification::Pending,
                     detail: None,
                 });
                 return Ok(RunResult {
@@ -593,8 +654,8 @@ impl Controller {
             });
             if let Some(reason) = expiry(interruption, campaign_expired, case_expired) {
                 observed = Some(Observation {
-                    kind: reason.into(),
-                    verification: "pending".into(),
+                    kind: reason,
+                    verification: Verification::Pending,
                     ..Observation::default()
                 });
                 break;
@@ -604,8 +665,8 @@ impl Controller {
                 match worker.resource.oom_observed() {
                     Ok(true) => {
                         observed = Some(Observation {
-                            kind: "oom".into(),
-                            verification: "pending".into(),
+                            kind: OutcomeKind::Oom,
+                            verification: Verification::Pending,
                             ..Observation::default()
                         });
                         break;
@@ -631,9 +692,9 @@ impl Controller {
                     closed_at = Some(Instant::now());
                 }
                 Ok(Ok(Some(message))) => {
-                    let kind = message["kind"].as_str().unwrap_or("");
-                    match kind {
-                        "ready" if !ready => {
+                    let kind = crate::types::decode_kind(&message);
+                    match (kind, operation) {
+                        (Some(IncomingKind::Ready), _) if !ready => {
                             ready = true;
                             let environment = message["environment"].clone();
                             if report.environment.is_null() {
@@ -650,12 +711,17 @@ impl Controller {
                                     .as_secs_f64()
                                 },
                             );
-                            worker.enqueue(json!({"kind": "start", "pytest_args": config.pytest_args, "test_id": invocation.test_id,
-                                "mode": if mode == "raw_replay" { "run" } else { mode }, "token": token, "budget_seconds": budget}));
+                            worker.enqueue(OutgoingFrame::Start {
+                                pytest_args: &config.pytest_args,
+                                test_id: &invocation.test_id,
+                                mode: mode.wire(),
+                                token,
+                                budget_seconds: budget,
+                            });
                         }
-                        "next"
+                        (Some(IncomingKind::Next), _)
                             if ready
-                                && ["run", "raw_replay"].contains(&mode)
+                                && matches!(mode, SessionMode::Run | SessionMode::RawReplay)
                                 && active.is_none() =>
                         {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
@@ -667,34 +733,43 @@ impl Controller {
                                 || observed.is_some()
                                 || (search.is_none()
                                     && offset + consumed >= invocation.inputs.len())
-                                || (mode == "raw_replay" && consumed >= 1)
+                                || (mode == SessionMode::RawReplay && consumed >= 1)
                             {
-                                worker.enqueue(json!({"kind": "end"}));
+                                worker.enqueue(OutgoingFrame::End);
                             } else {
                                 let input = search.as_mut().map_or_else(
                                     || invocation.inputs[offset + consumed].clone(),
                                     Search::next_case,
                                 );
-                                if mode == "run" {
+                                if mode == SessionMode::Run {
                                     report.attempts += 1;
                                 }
-                                let id = if mode == "run" { report.attempts } else { 0 };
+                                let id = if mode == SessionMode::Run {
+                                    report.attempts
+                                } else {
+                                    0
+                                };
                                 active = Some((id, input.clone(), Instant::now()));
                                 consumed += 1;
-                                worker.enqueue(
-                                    json!({"kind": "case", "case_id": id, "input": input}),
-                                );
+                                worker.enqueue(OutgoingFrame::Case {
+                                    case_id: id,
+                                    input: &input,
+                                });
                             }
                         }
-                        "replay_case" if ready && mode == "replay" && active.is_none() => {
+                        (Some(IncomingKind::ReplayCase), SessionOperation::Replay(token))
+                            if ready && active.is_none() =>
+                        {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
                                 observed = Some(infrastructure("replay test ID mismatch"));
                                 break;
                             }
-                            active = Some((0, token.cloned().unwrap_or_default(), Instant::now()));
-                            worker.enqueue(json!({"kind": "ack"}));
+                            active = Some((0, token.to_vec(), Instant::now()));
+                            worker.enqueue(OutgoingFrame::Ack);
                         }
-                        "baseline_case" if ready && mode == "baseline" && active.is_none() => {
+                        (Some(IncomingKind::BaselineCase), _)
+                            if ready && mode == SessionMode::Baseline && active.is_none() =>
+                        {
                             if message["test_id"].as_str() != Some(&invocation.test_id)
                                 || message["case_id"].as_u64()
                                     != Some(u64::try_from(consumed).unwrap_or(u64::MAX) + 1)
@@ -710,9 +785,11 @@ impl Controller {
                                 vec![],
                                 Instant::now(),
                             ));
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(OutgoingFrame::Ack);
                         }
-                        "baseline_done" if ready && mode == "baseline" && active.is_none() => {
+                        (Some(IncomingKind::BaselineDone), _)
+                            if ready && mode == SessionMode::Baseline && active.is_none() =>
+                        {
                             report.baseline_statistics = json!({"exit_code": message["exit_code"], "statistics": message["statistics"]});
                             if ![Some(0), Some(1)].contains(&message["exit_code"].as_i64())
                                 || (message["exit_code"] == 1 && observed.is_none())
@@ -723,15 +800,15 @@ impl Controller {
                                 report.outcomes.push(Outcome {
                                     test_id: invocation.test_id.clone(),
                                     case_id: 0,
-                                    kind: "infrastructure".into(),
+                                    kind: OutcomeKind::Infrastructure,
                                     original: None,
                                     derived: vec![],
-                                    verification: "pending".into(),
+                                    verification: Verification::Pending,
                                     detail: None,
                                 });
                             }
                         }
-                        "skipped" if ready => {
+                        (Some(IncomingKind::Skipped), _) if ready => {
                             if message["observation"]["nodeid"].as_str()
                                 != Some(&invocation.test_id)
                                 || active.as_ref().is_some_and(|(id, _, _)| {
@@ -743,24 +820,26 @@ impl Controller {
                             }
                             active = None;
                             observed = Some(Observation {
-                                kind: "skip".into(),
-                                verification: "unstable".into(),
+                                kind: OutcomeKind::Skip,
+                                verification: Verification::Unstable,
                                 ..Observation::default()
                             });
-                            if ["run", "baseline"].contains(&mode) {
+                            if matches!(mode, SessionMode::Run | SessionMode::Baseline) {
                                 report.outcomes.push(Outcome {
                                     test_id: invocation.test_id.clone(),
                                     case_id: 0,
-                                    kind: "skip".into(),
+                                    kind: OutcomeKind::Skip,
                                     original: None,
                                     derived: vec![],
-                                    verification: "pending".into(),
+                                    verification: Verification::Pending,
                                     detail: None,
                                 });
                             }
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(OutgoingFrame::Ack);
                         }
-                        "result" if ready && mode != "minimize" => {
+                        (Some(IncomingKind::Result), _)
+                            if ready && mode != SessionMode::Minimize =>
+                        {
                             let Some((id, input, case_start)) = active.as_ref() else {
                                 observed = Some(infrastructure("result without active case"));
                                 break;
@@ -780,14 +859,19 @@ impl Controller {
                             };
                             let mut value = value;
                             if worker.resource.oom_observed()? {
-                                value.kind = "oom".into();
+                                value.kind = OutcomeKind::Oom;
                             }
-                            if !["pass", "reject", "failure", "oom"].contains(&value.kind.as_str())
-                            {
+                            if !matches!(
+                                value.kind,
+                                OutcomeKind::Pass
+                                    | OutcomeKind::Reject
+                                    | OutcomeKind::Failure
+                                    | OutcomeKind::Oom
+                            ) {
                                 observed = Some(infrastructure("unknown observation"));
                                 break;
                             }
-                            if ["run", "baseline"].contains(&mode) {
+                            if matches!(mode, SessionMode::Run | SessionMode::Baseline) {
                                 report.adapter_ns =
                                     report.adapter_ns.saturating_add(value.elapsed_ns);
                                 report.dispatch_roundtrip_ns =
@@ -798,18 +882,19 @@ impl Controller {
                                 if let Some(search) = search.as_mut() {
                                     search.observe(input, &value);
                                 }
-                                if value.kind == "reject" {
+                                if value.kind == OutcomeKind::Reject {
                                     report.rejected += 1;
                                 } else {
                                     report.useful += 1;
                                 }
-                                let new_finding = ["failure", "oom"].contains(&value.kind.as_str())
-                                    && (mode != "baseline" || observed.is_none());
+                                let new_finding =
+                                    matches!(value.kind, OutcomeKind::Failure | OutcomeKind::Oom)
+                                        && (mode != SessionMode::Baseline || observed.is_none());
                                 if new_finding {
                                     report
                                         .first_discovery_ms
                                         .get_or_insert(campaign_start.elapsed().as_millis());
-                                    if mode == "run" {
+                                    if mode == SessionMode::Run {
                                         original = Some(
                                             store
                                                 .record_original(&invocation.test_id, input, &value)
@@ -825,7 +910,7 @@ impl Controller {
                                         kind: value.kind.clone(),
                                         original: original.clone(),
                                         derived: vec![],
-                                        verification: "pending".into(),
+                                        verification: Verification::Pending,
                                         detail: None,
                                     });
                                 }
@@ -833,28 +918,32 @@ impl Controller {
                                 observed = Some(value);
                             }
                             active = None;
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(OutgoingFrame::Ack);
                         }
-                        "candidate" if ready && mode == "minimize" => {
+                        (Some(IncomingKind::Candidate), _)
+                            if ready && mode == SessionMode::Minimize =>
+                        {
                             let candidate: Vec<u8> =
                                 serde_json::from_value(message["token"].clone())
                                     .map_err(io::Error::from)?;
                             // Retain the entire opaque token before authorizing its execution.
                             active = Some((0, candidate, Instant::now()));
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(OutgoingFrame::Ack);
                         }
-                        "shrunk" if ready && mode == "minimize" => {
+                        (Some(IncomingKind::Shrunk), _)
+                            if ready && mode == SessionMode::Minimize =>
+                        {
                             // Caller owns original lineage; return a separate record for this attempt.
-                            derived.push(json!({"mode": "minimize", "token": message["token"], "complete": message["complete"], "verification": "pending"}));
+                            derived.push(json!({"mode": "minimize", "token": message["token"], "complete": message["complete"], "verification": Verification::Pending}));
                             active = None;
                         }
-                        "done" if ready => {
+                        (Some(IncomingKind::Done), _) if ready => {
                             if active.is_some() {
                                 observed = Some(infrastructure("done with an active case"));
                             }
                             break;
                         }
-                        "error" => {
+                        (Some(IncomingKind::Error), _) => {
                             observed = Some(infrastructure(
                                 message["message"].as_str().unwrap_or("worker error"),
                             ));
@@ -887,12 +976,11 @@ impl Controller {
                     if observed.is_none() && worker.resource.oom_observed()? {
                         observed = Some(Observation {
                             kind: if active.is_some() {
-                                "oom"
+                                OutcomeKind::Oom
                             } else {
-                                "infrastructure"
-                            }
-                            .into(),
-                            verification: "pending".into(),
+                                OutcomeKind::Infrastructure
+                            },
+                            verification: Verification::Pending,
                             ..Observation::default()
                         });
                     }
@@ -900,9 +988,9 @@ impl Controller {
                         observed =
                             Some(if active.is_some() && status.is_some_and(native_failure) {
                                 Observation {
-                                    kind: "native_crash".into(),
+                                    kind: OutcomeKind::NativeCrash,
                                     rendered: status.map(|s| s.to_string()),
-                                    verification: "pending".into(),
+                                    verification: Verification::Pending,
                                     ..Observation::default()
                                 }
                             } else {
@@ -930,26 +1018,35 @@ impl Controller {
             aggregate.truncated = observed > aggregate.tail.len() as u64;
         }
         if let Some(value) = &observed {
-            let failure = !(["pass", "reject", "skip", "failure"].contains(&value.kind.as_str())
-                || value.kind == "oom" && original.is_some());
-            if mode == "minimize"
+            let failure = !(matches!(
+                value.kind,
+                OutcomeKind::Pass | OutcomeKind::Reject | OutcomeKind::Skip | OutcomeKind::Failure
+            ) || value.kind == OutcomeKind::Oom && original.is_some());
+            if mode == SessionMode::Minimize
                 && let Some((_, candidate, _)) = &active
             {
                 derived
                     .push(json!({"mode": "minimize", "active_token": candidate, "outcome": value}));
             }
             if failure
-                && (["run", "baseline"].contains(&mode)
-                    || ["infrastructure", "campaign_cancelled", "interrupted"]
-                        .contains(&value.kind.as_str()))
+                && (matches!(mode, SessionMode::Run | SessionMode::Baseline)
+                    || matches!(
+                        value.kind,
+                        OutcomeKind::Infrastructure
+                            | OutcomeKind::CampaignCancelled
+                            | OutcomeKind::Interrupted
+                    ))
             {
-                if ["native_crash", "case_timeout", "oom"].contains(&value.kind.as_str()) {
+                if matches!(
+                    value.kind,
+                    OutcomeKind::NativeCrash | OutcomeKind::CaseTimeout | OutcomeKind::Oom
+                ) {
                     report
                         .first_discovery_ms
                         .get_or_insert(campaign_start.elapsed().as_millis());
                 }
                 let id = active.as_ref().map_or(0, |(id, _, _)| *id);
-                if mode == "run"
+                if mode == SessionMode::Run
                     && let Some((_, input, _)) = active
                 {
                     original = Some(
@@ -964,7 +1061,7 @@ impl Controller {
                     kind: value.kind.clone(),
                     original: original.clone(),
                     derived: vec![],
-                    verification: "pending".into(),
+                    verification: Verification::Pending,
                     detail: None,
                 });
             }
@@ -973,10 +1070,10 @@ impl Controller {
             report.outcomes.push(Outcome {
                 test_id: invocation.test_id.clone(),
                 case_id: 0,
-                kind: "infrastructure".into(),
+                kind: OutcomeKind::Infrastructure,
                 original: None,
                 derived: vec![],
-                verification: format!("cleanup failed: {error}"),
+                verification: Verification::Diagnostic(format!("cleanup failed: {error}")),
                 detail: None,
             });
         }
@@ -1056,9 +1153,9 @@ fn poll_exit(child: &mut Child) -> io::Result<Option<std::process::ExitStatus>> 
 
 fn infrastructure(message: &str) -> Observation {
     Observation {
-        kind: "infrastructure".into(),
+        kind: OutcomeKind::Infrastructure,
         rendered: Some(message.into()),
-        verification: "pending".into(),
+        verification: Verification::Pending,
         ..Observation::default()
     }
 }
@@ -1067,36 +1164,107 @@ fn infrastructure(message: &str) -> Observation {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    fn append_chunks(tail: &mut LogTail, all: &mut Vec<u8>, chunks: &[Vec<u8>], limit: usize) {
+        for chunk in chunks {
+            all.extend(chunk);
+            tail.append(chunk, limit);
+        }
+    }
     proptest! {
         #[test]
         fn tail_preserves_exact_suffix(chunks in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..256), 0..32), limit in 0usize..1024) {
             let mut tail = LogTail::default();
             let mut all: Vec<u8> = Vec::new();
-            for chunk in chunks { all.extend(&chunk); tail.append(&chunk, limit); }
+            append_chunks(&mut tail, &mut all, &chunks, limit);
             let start = all.len().saturating_sub(limit);
             prop_assert_eq!(tail.tail.into_iter().collect::<Vec<_>>(), &all[start..]);
             prop_assert_eq!(tail.observed, all.len() as u64);
         }
     }
-    #[test]
-    fn lean_generated_budget_correspondence() {
-        for line in include_str!("../formal/budget-cases.tsv").lines() {
-            let fields: Vec<_> = line.split('\t').collect();
-            let expected = expiry(
-                fields[0] == "true",
-                fields[1] == "true",
-                fields[2] == "true",
-            )
-            .unwrap_or("running");
-            assert_eq!(expected, fields[3]);
-        }
+    fn assert_budget_oracle_case(index: usize) {
+        let line = include_str!("../formal/budget-cases.tsv")
+            .lines()
+            .nth(index)
+            .unwrap();
+        let fields: Vec<_> = line.split('\t').collect();
+        let expected = match fields[3] {
+            "running" => None,
+            kind => Some(serde_json::from_value::<OutcomeKind>(json!(kind)).unwrap()),
+        };
+        assert_eq!(
+            expiry(
+                fields[0].parse().unwrap(),
+                fields[1].parse().unwrap(),
+                fields[2].parse().unwrap()
+            ),
+            expected
+        );
     }
     #[test]
-    fn windows_abnormal_exit_table_is_candidate_evidence_only() {
+    fn lean_budget_case_0() {
+        assert_budget_oracle_case(0);
+    }
+    #[test]
+    fn lean_budget_case_1() {
+        assert_budget_oracle_case(1);
+    }
+    #[test]
+    fn lean_budget_case_2() {
+        assert_budget_oracle_case(2);
+    }
+    #[test]
+    fn lean_budget_case_3() {
+        assert_budget_oracle_case(3);
+    }
+    #[test]
+    fn lean_budget_case_4() {
+        assert_budget_oracle_case(4);
+    }
+    #[test]
+    fn lean_budget_case_5() {
+        assert_budget_oracle_case(5);
+    }
+    #[test]
+    fn lean_budget_case_6() {
+        assert_budget_oracle_case(6);
+    }
+    #[test]
+    fn lean_budget_case_7() {
+        assert_budget_oracle_case(7);
+    }
+    #[test]
+    fn generated_budget_oracle_has_no_uncovered_rows() {
+        assert_eq!(
+            include_str!("../formal/budget-cases.tsv").lines().count(),
+            8
+        );
+    }
+    #[test]
+    fn windows_abnormal_exit_case_0() {
         assert!(windows_abnormal_exit(3));
+    }
+    #[test]
+    fn windows_abnormal_exit_case_1() {
         assert!(windows_abnormal_exit(-1_073_741_819));
+    }
+    #[test]
+    fn windows_abnormal_exit_case_2() {
         assert!(!windows_abnormal_exit(7));
+    }
+    #[test]
+    fn windows_abnormal_exit_case_3() {
         assert!(!windows_abnormal_exit(0));
+    }
+    #[cfg(unix)]
+    fn await_exit(child: &mut Child) -> std::process::ExitStatus {
+        let start = Instant::now();
+        loop {
+            if let Some(status) = poll_exit(child).unwrap() {
+                return status;
+            }
+            assert!(start.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(1));
+        }
     }
     #[cfg(unix)]
     #[test]
@@ -1107,14 +1275,7 @@ mod tests {
             .process_group(0)
             .spawn()
             .unwrap();
-        let start = Instant::now();
-        let status = loop {
-            if let Some(status) = poll_exit(&mut child).unwrap() {
-                break status;
-            }
-            assert!(start.elapsed() < Duration::from_secs(2));
-            thread::sleep(Duration::from_millis(1));
-        };
+        let status = await_exit(&mut child);
         assert_eq!(status.code(), Some(7));
         let mut raw = 0;
         let pid = i32::try_from(child.id()).unwrap();
@@ -1124,11 +1285,5 @@ mod tests {
             unsafe { libc::waitpid(pid, &raw mut raw, libc::WNOHANG) },
             pid
         );
-    }
-    #[test]
-    fn precedence() {
-        assert_eq!(expiry(false, true, true), Some("campaign_cancelled"));
-        assert_eq!(expiry(true, true, true), Some("interrupted"));
-        assert_eq!(expiry(false, false, true), Some("case_timeout"));
     }
 }

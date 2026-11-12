@@ -12,6 +12,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, override
 
+from model import PytestPhase, ResultKind, Verification
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
@@ -40,12 +42,12 @@ class CaseResult:
     """A case outcome with optional opaque reproduction data."""
 
     nodeid: str
-    kind: str
+    kind: ResultKind
     canonical: bytes | None = None
     fingerprint: str | None = None
     replay_token: bytes | None = None
     rendered: str | None = None
-    verification: str = "pending"
+    verification: Verification = Verification.PENDING
     database_replay: bool = False
     features: tuple[str, ...] = ()
     elapsed_ns: int = 0
@@ -57,7 +59,7 @@ class SessionEvidence:
 
     selected: list[str] = field(default_factory=list)
     cases: list[CaseResult] = field(default_factory=list)
-    fixture_events: list[tuple[str, str]] = field(default_factory=list)
+    fixture_events: list[tuple[str, PytestPhase]] = field(default_factory=list)
     coverage_roots: tuple[str, ...] = ()
 
 
@@ -75,7 +77,7 @@ class CaseDriver(Protocol):
 
 MAX_RETAINED_CASES = 256
 
-FIXTURE_EVENTS = pytest.StashKey[list[tuple[str, str]]]()
+FIXTURE_EVENTS = pytest.StashKey[list[tuple[str, PytestPhase]]]()
 
 
 class _InvocationItem(pytest.Function):
@@ -209,12 +211,12 @@ class _Session:
                 if (
                     self.driver is None
                     or len(self.evidence.cases) < MAX_RETAINED_CASES
-                    or case.kind == "failure"
+                    or case.kind == ResultKind.FAILURE
                 ):
                     self.evidence.cases.append(case)
                 if self.driver:
                     self.driver.observe(case)
-                if case.kind in {"failure", "skip"}:
+                if case.kind in {ResultKind.FAILURE, ResultKind.SKIP}:
                     return
         finally:
             if monitor:
@@ -222,13 +224,15 @@ class _Session:
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.skipped:
-            case = CaseResult(report.nodeid, "skip")
+            case = CaseResult(report.nodeid, ResultKind.SKIP)
             self.evidence.cases.append(case)
             if self.driver:
                 self.driver.observe(case)
         if report.failed:
             self.evidence.cases.append(
-                CaseResult(report.nodeid, "infrastructure", rendered=str(report.longrepr)[-4096:])
+                CaseResult(
+                    report.nodeid, ResultKind.INFRASTRUCTURE, rendered=str(report.longrepr)[-4096:]
+                )
             )
 
 
@@ -257,7 +261,7 @@ def _in_context(
     pytest.main(pytest_args, plugins=[plugin])
     if plugin.error:
         raise plugin.error
-    if any(case.kind != "skip" for case in plugin.evidence.cases):
+    if any(case.kind != ResultKind.SKIP for case in plugin.evidence.cases):
         message = plugin.evidence.cases[0].rendered or "operation infrastructure failure"
         raise RuntimeError(message)
     return plugin.evidence
@@ -280,13 +284,17 @@ def replay(nodeid: str, token: bytes, pytest_args: list[str]) -> CaseResult:
         )
         if completed.returncode or not output.exists():
             return CaseResult(
-                nodeid, "infrastructure", rendered=completed.stderr.decode(errors="replace")[-4096:]
+                nodeid,
+                ResultKind.INFRASTRUCTURE,
+                rendered=completed.stderr.decode(errors="replace")[-4096:],
             )
         value = json.loads(output.read_text())
         for key in ("canonical", "replay_token"):
             if value.get(key) is not None:
                 value[key] = bytes.fromhex(value[key])
         value["features"] = tuple(value.get("features", ()))
+        value["kind"] = ResultKind(value["kind"])
+        value["verification"] = Verification(value["verification"])
         return CaseResult(**value)
 
 
@@ -302,7 +310,7 @@ def minimize(
         result = bind_target(item).minimize(token, budget_seconds, before_case)
 
     evidence = _in_context(nodeid, value["pytest_args"], operation)
-    if result is None and any(case.kind == "skip" for case in evidence.cases):
+    if result is None and any(case.kind == ResultKind.SKIP for case in evidence.cases):
         pytest.skip("minimization invocation skipped")
     if result is None:
         message = "minimization did not execute a target"
@@ -327,15 +335,15 @@ def run_token(
         evaluated = target.check_token(token)
         expected = unpack_token(token).get("fingerprint")
         status = (
-            "confirmed"
-            if evaluated.kind == "failure" and evaluated.fingerprint == expected
-            else "unstable"
+            Verification.CONFIRMED
+            if evaluated.kind == ResultKind.FAILURE and evaluated.fingerprint == expected
+            else Verification.UNSTABLE
         )
         result = CaseResult(item.nodeid, **vars(evaluated), verification=status)
 
     evidence = _in_context(nodeid, pytest_args, operation)
-    if result is None and any(case.kind == "skip" for case in evidence.cases):
-        return CaseResult(nodeid, "skip", verification="unstable")
+    if result is None and any(case.kind == ResultKind.SKIP for case in evidence.cases):
+        return CaseResult(nodeid, ResultKind.SKIP, verification=Verification.UNSTABLE)
     if result is None:
         message = "replay did not execute a target"
         raise RuntimeError(message)
@@ -373,8 +381,8 @@ class _OrdinarySession:
         self.excluded = tuple(item.path for item in items)
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if report.skipped and report.when == "setup":
-            self.after(CaseResult(report.nodeid, "skip"))
+        if report.skipped and PytestPhase(report.when) == PytestPhase.SETUP:
+            self.after(CaseResult(report.nodeid, ResultKind.SKIP))
 
     @pytest.hookimpl(wrapper=True, trylast=True)
     def pytest_runtest_call(self, item: pytest.Item) -> Generator[None]:

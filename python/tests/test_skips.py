@@ -8,6 +8,7 @@ from pathlib import Path  # noqa: TC003 -- pytest fixture annotation introspecti
 
 import pytest
 from adapter import Invocation, replay, run_ordinary, run_session
+from model import ResultKind, Verification
 
 
 @pytest.fixture
@@ -109,5 +110,5 @@ def test_replay_skip_is_unstable(skip_project: Path, name: str) -> None:
     assert original.replay_token is not None
     (skip_project / "test_skip.marker").touch()
     result = replay(node, original.replay_token, args)
-    assert result.kind == "skip"
-    assert result.verification == "unstable"
+    assert result.kind == ResultKind.SKIP
+    assert result.verification == Verification.UNSTABLE

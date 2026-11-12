@@ -4,7 +4,7 @@
 //! Mechanisms informed by hoimin resource/{linux,windows,portable}.rs at
 //! 542ec59c002d72fdff0137aa90113ffa59d70844 (Elastic-2.0). This smaller synchronous
 //! probe has no run-wide process framework or product compatibility guarantee.
-use crate::controller::Limits;
+use crate::{controller::Limits, types::BackendName};
 use serde::Serialize;
 use std::{
     io,
@@ -23,7 +23,7 @@ pub type ResourceError = io::Error;
 pub struct Capabilities {
     pub tree_memory_hard: bool,
     pub tree_cleanup: bool,
-    pub backend: String,
+    pub backend: BackendName,
     pub reason: Option<String>,
 }
 impl Capabilities {
@@ -31,16 +31,16 @@ impl Capabilities {
         Self {
             tree_memory_hard: false,
             tree_cleanup: false,
-            backend: "portable".into(),
+            backend: BackendName::Portable,
             reason: Some(reason),
         }
     }
     #[cfg(any(target_os = "linux", windows))]
-    fn hard(backend: &str) -> Self {
+    fn hard(backend: BackendName) -> Self {
         Self {
             tree_memory_hard: true,
             tree_cleanup: true,
-            backend: backend.into(),
+            backend,
             reason: None,
         }
     }
@@ -94,9 +94,9 @@ impl Guard {
     pub fn capabilities(&self) -> Capabilities {
         match &self.backend {
             #[cfg(target_os = "linux")]
-            Backend::Linux(_) => Capabilities::hard("cgroup-v2"),
+            Backend::Linux(_) => Capabilities::hard(BackendName::CgroupV2),
             #[cfg(windows)]
-            Backend::Windows(_) => Capabilities::hard("job-object"),
+            Backend::Windows(_) => Capabilities::hard(BackendName::JobObject),
             Backend::Portable(group) => Capabilities::portable(group.reason.clone()),
         }
     }

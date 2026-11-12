@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 
+from model import ArtifactMode
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -479,6 +481,16 @@ def test_non_object_config_reports_infrastructure(tmp_path: Path) -> None:
     assert json.loads((out / "report.json").read_text())["outcomes"][0]["kind"] == "infrastructure"
 
 
+def _minimization_record(value: dict[str, object]) -> bool:
+    """Select one process-boundary minimization record from stored wire evidence."""
+    return ArtifactMode(value["mode"]) == ArtifactMode.MINIMIZE
+
+
+def _retained_original(value: Outcome) -> bool:
+    """Select the finding carrying immutable original bytes in a report."""
+    return bool(value["original"])
+
+
 def test_unlimited_campaign_has_no_hidden_one_second_shrink_budget(
     probe_run: Callable[..., tuple[int, Report]],
 ) -> None:
@@ -487,17 +499,21 @@ def test_unlimited_campaign_has_no_hidden_one_second_shrink_budget(
     assert code == 1
     finding = report["outcomes"][0]
     records = [json.loads(Path(path).read_text())["evidence"] for path in finding["derived"]]
-    minimized = [item for item in records if item["mode"] == "minimize"]
+    minimized = list(filter(_minimization_record, records))
     assert minimized
     assert minimized[0]["complete"] is True
 
 
 @pytest.mark.parametrize("feedback", [True, False])
-@pytest.mark.parametrize("target", ["crash", "hang", "crash_later", "hang_later"])
+@pytest.mark.parametrize(
+    ("target", "minimum_attempts"),
+    [("crash", 1), ("hang", 1), ("crash_later", 2), ("hang_later", 2)],
+)
 @pytest.mark.parametrize("scheduled", [(), (b"\x00",)])
 def test_generated_finding_replays_retained_input(
     probe_run: Callable[..., tuple[int, Report]],
     target: str,
+    minimum_attempts: int,
     scheduled: tuple[bytes, ...],
     *,
     feedback: bool,
@@ -507,12 +523,11 @@ def test_generated_finding_replays_retained_input(
         (target,), inputs=scheduled, search=True, feedback=feedback, case_ms=150
     )
     assert code == 1
-    finding = next(outcome for outcome in report["outcomes"] if outcome["original"])
+    finding = next(filter(_retained_original, report["outcomes"]))
     assert finding["verification"] == "confirmed"
     original = json.loads(Path(finding["original"]).read_text())
     assert original["input"]
-    if target.endswith("later"):
-        assert report["attempts"] > 1
+    assert report["attempts"] >= minimum_attempts
     derived = json.loads(Path(finding["derived"][0]).read_text())
     assert derived["evidence"]["input"] == original["input"]
 
@@ -574,6 +589,7 @@ def test_skip_setup(skipped_setup, value):
     assert report["useful"] == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX reserved-FD fault injection")
 def test_done_cannot_silently_discard_active_case(
     probe_run: Callable[..., tuple[int, Report]], process_project: Path
 ) -> None:
@@ -591,8 +607,6 @@ def test_early_done(value):
     time.sleep(2)
 """
     )
-    if os.name == "nt":
-        pytest.skip("POSIX reserved-FD fault injection")
     code, report = probe_run(("early_done",))
     assert code == 2  # noqa: PLR2004 -- infrastructure failure
     assert report["outcomes"][0]["kind"] == "infrastructure"

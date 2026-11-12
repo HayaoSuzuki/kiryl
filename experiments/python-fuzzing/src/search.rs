@@ -1,6 +1,6 @@
 // Copyright (c) 2026 kiryl contributors
 //! Deterministic bounded byte mutation; Hypothesis strategies stay Python-owned.
-use crate::controller::Observation;
+use crate::{controller::Observation, types::OutcomeKind};
 use std::collections::HashSet;
 
 const MAX_INPUT: usize = 4096;
@@ -84,7 +84,7 @@ impl Search {
         candidate
     }
     pub fn observe(&mut self, input: &[u8], observation: &Observation) {
-        if !["pass", "failure"].contains(&observation.kind.as_str()) {
+        if !matches!(observation.kind, OutcomeKind::Pass | OutcomeKind::Failure) {
             return;
         }
         let mut novel = false;
@@ -103,7 +103,7 @@ impl Search {
             novel |= self.features.insert(feature.clone());
         }
         if self.feedback && novel {
-            let candidate = if observation.kind == "pass" {
+            let candidate = if observation.kind == OutcomeKind::Pass {
                 observation.canonical.as_deref().unwrap_or(input)
             } else {
                 input

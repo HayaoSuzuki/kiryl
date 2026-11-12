@@ -18,6 +18,7 @@ from hypothesis.database import choices_to_bytes
 from hypothesis.internal.conjecture.choice import ChoiceTemplate, ValueHole
 from hypothesis.internal.conjecture.data import ConjectureData
 from hypothesis_bridge import BoundTarget, bind_target, instrument_ordinary, unpack_token
+from model import ReplayKind, ResultKind, Verification
 
 
 @pytest.fixture
@@ -92,7 +93,7 @@ def test_invalid_replay_candidates_fail_before_evaluation(
     target: BoundTarget, changes: dict[str, object], message: str
 ) -> None:
     """Reject each independently malformed replay candidate before execution."""
-    envelope = dict(unpack_token(target.token("raw", "")))
+    envelope = dict(unpack_token(target.token(ReplayKind.RAW, "")))
     envelope.update(changes)
     with pytest.raises(ValueError, match=message):
         target.check_token(json.dumps(envelope).encode())
@@ -105,8 +106,8 @@ def test_choice_prefix_replay_accepts_constant_property(
     target: BoundTarget, prefix: list[dict[str, object]]
 ) -> None:
     """Replay valid templates and concrete choices without altering the target."""
-    token = target.token("choices", "", prefix=prefix, random=Random(0).getstate())  # noqa: S311 -- deterministic replay state
-    assert target.check_token(token).kind == "pass"
+    token = target.token(ReplayKind.CHOICES, "", prefix=prefix, random=Random(0).getstate())  # noqa: S311 -- deterministic replay state
+    assert target.check_token(token).kind == ResultKind.PASS
 
 
 @pytest.mark.parametrize("prefix", [(ChoiceTemplate("simplest", 1),), (True,)])
@@ -114,7 +115,7 @@ def test_choice_token_round_trip(target: BoundTarget, prefix: tuple[ChoiceTempla
     """Encode real Hypothesis prefixes and replay the resulting bridge token."""
     data = ConjectureData(random=Random(0), prefix=prefix)  # noqa: S311 -- deterministic replay
     token = target._choice_token(data)  # noqa: SLF001 -- pinned compatibility seam under test
-    assert target.check_token(token).kind == "pass"
+    assert target.check_token(token).kind == ResultKind.PASS
 
 
 def test_opaque_choice_prefix_has_no_unsafe_replay_token(target: BoundTarget) -> None:
@@ -131,19 +132,21 @@ def test_raw_token_callback_precedes_case_execution(
     acknowledged: list[bool] = []
     result = run_token(
         target.item.nodeid,
-        target.token("raw", ""),
+        target.token(ReplayKind.RAW, ""),
         [str(bridge_project), "-q"],
         lambda: acknowledged.append(True),
     )
     assert acknowledged == [True]
-    assert result.kind == "pass"
-    assert result.verification == "unstable"
+    assert result.kind == ResultKind.PASS
+    assert result.verification == Verification.UNSTABLE
 
 
 def test_minimization_setup_skip_remains_skip(target: BoundTarget) -> None:
     """A skipped invocation cannot manufacture a semantic reduction result."""
     with pytest.raises(pytest.skip.Exception, match="invocation skipped"):
-        minimize("test_bridge_edges.py::test_skip", target.token("raw", ""), 1.0, lambda _: None)
+        minimize(
+            "test_bridge_edges.py::test_skip", target.token(ReplayKind.RAW, ""), 1.0, lambda _: None
+        )
 
 
 def test_invalid_context_selection_propagates_collection_error(
@@ -151,7 +154,7 @@ def test_invalid_context_selection_propagates_collection_error(
 ) -> None:
     """A stale replay target fails before its property can run."""
     with pytest.raises(ValueError, match="unknown selected"):
-        run_token("missing", target.token("raw", ""), [str(bridge_project), "-q"])
+        run_token("missing", target.token(ReplayKind.RAW, ""), [str(bridge_project), "-q"])
 
 
 def test_context_operation_failure_is_infrastructure(
@@ -159,7 +162,9 @@ def test_context_operation_failure_is_infrastructure(
 ) -> None:
     """Malformed raw bytes preserve the context operation's infrastructure error."""
     with pytest.raises(RuntimeError, match="fromhex"):
-        run_token(target.item.nodeid, target.token("raw", "zz"), [str(bridge_project), "-q"])
+        run_token(
+            target.item.nodeid, target.token(ReplayKind.RAW, "zz"), [str(bridge_project), "-q"]
+        )
 
 
 def test_ordinary_non_hypothesis_target_is_left_to_pytest(bridge_project: Path) -> None:
@@ -209,15 +214,21 @@ class CountingDriver:
 
     def observe(self, result: adapter.CaseResult) -> None:
         """Count every completed candidate independently of retention."""
-        assert result.kind in {"pass", "skip"}
+        assert result.kind in {ResultKind.PASS, ResultKind.SKIP}
         self.observed += 1
 
 
 @pytest.mark.parametrize(
     ("name", "kind"),
-    [("TestOwned", "pass"), ("TestSkipped", "skip"), ("TestBroken", "infrastructure")],
+    [
+        ("TestOwned", ResultKind.PASS),
+        ("TestSkipped", ResultKind.SKIP),
+        ("TestBroken", ResultKind.INFRASTRUCTURE),
+    ],
 )
-def test_unittest_instance_lifecycle_edges(bridge_project: Path, name: str, kind: str) -> None:
+def test_unittest_instance_lifecycle_edges(
+    bridge_project: Path, name: str, kind: ResultKind
+) -> None:
     """Respect instance-owned methods, unittest skips, and setup failures."""
     node = f"test_bridge_edges.py::{name}::test_property"
     evidence = run_session([str(bridge_project), "-q"], [Invocation(node, (b"",))])
@@ -231,7 +242,7 @@ def test_driver_receives_setup_skip(bridge_project: Path) -> None:
         [str(bridge_project), "-q"], [Invocation("test_bridge_edges.py::test_skip", ())], driver
     )
     assert driver.observed == driver.count
-    assert evidence.cases[0].kind == "skip"
+    assert evidence.cases[0].kind == ResultKind.SKIP
 
 
 def test_invalid_pytest_option_is_infrastructure(bridge_project: Path) -> None:
@@ -277,7 +288,7 @@ def test_shrink_budget_expires_around_candidate_acknowledgement(
         result = minimize(node, token, 1.0, lambda _: None)
     assert result.complete is False
     assert result.original == token
-    assert result.verification == "confirmed"
+    assert result.verification == Verification.CONFIRMED
 
 
 def test_measurement_rejects_changed_database_digest(target: BoundTarget) -> None:
@@ -310,9 +321,11 @@ def test_fresh_replay_collection_failure_is_infrastructure(
 ) -> None:
     """A fresh interpreter's collection failure remains an infrastructure result."""
     result = adapter.replay(
-        target.item.nodeid, target.token("raw", ""), [str(bridge_project.parent / "missing.py")]
+        target.item.nodeid,
+        target.token(ReplayKind.RAW, ""),
+        [str(bridge_project.parent / "missing.py")],
     )
-    assert result.kind == "infrastructure"
+    assert result.kind == ResultKind.INFRASTRUCTURE
     assert "missing.py" in (result.rendered or "")
 
 
@@ -329,7 +342,7 @@ def test_plugin_suppressing_minimization_does_not_produce_a_result(
     """External protocol suppression cannot invent minimization evidence."""
     suppress_test_protocol(bridge_project)
     with pytest.raises(RuntimeError, match="minimization did not execute"):
-        minimize(target.item.nodeid, target.token("raw", ""), 1.0, lambda _: None)
+        minimize(target.item.nodeid, target.token(ReplayKind.RAW, ""), 1.0, lambda _: None)
 
 
 def test_plugin_suppressing_replay_does_not_produce_a_result(
@@ -338,7 +351,7 @@ def test_plugin_suppressing_replay_does_not_produce_a_result(
     """External protocol suppression cannot invent replay evidence."""
     suppress_test_protocol(bridge_project)
     with pytest.raises(RuntimeError, match="replay did not execute"):
-        run_token(target.item.nodeid, target.token("raw", ""), [str(bridge_project), "-q"])
+        run_token(target.item.nodeid, target.token(ReplayKind.RAW, ""), [str(bridge_project), "-q"])
 
 
 def test_property_changing_during_shrinking_retains_uncompleted_original(

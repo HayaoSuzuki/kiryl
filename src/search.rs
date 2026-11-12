@@ -1,6 +1,6 @@
 // Copyright (c) 2026 kiryl contributors
 //! Deterministic bounded byte mutation; Hypothesis strategies stay Python-owned.
-use crate::executor::Observation;
+use crate::executor::{Observation, OutcomeKind};
 use std::collections::HashSet;
 
 const MAX_INPUT: usize = 4096;
@@ -83,7 +83,7 @@ impl Search {
         candidate
     }
     pub fn observe(&mut self, input: &[u8], observation: &Observation) {
-        if !["pass", "failure"].contains(&observation.kind.as_str()) {
+        if !matches!(observation.kind, OutcomeKind::Pass | OutcomeKind::Failure) {
             return;
         }
         let mut novel = false;
@@ -102,7 +102,7 @@ impl Search {
             novel |= self.features.insert(feature.clone());
         }
         if novel {
-            let candidate = if observation.kind == "pass" {
+            let candidate = if observation.kind == OutcomeKind::Pass {
                 observation.canonical.as_deref().unwrap_or(input)
             } else {
                 input
@@ -137,12 +137,15 @@ mod tests {
         assert_eq!(Search::new(7).next_case(), vec![0; 512]);
     }
     #[rstest::rstest]
-    #[case("pass", vec![1, 2])]
-    #[case("failure", vec![9])]
-    fn novel_observation_selects_candidate_bytes(#[case] kind: &str, #[case] expected: Vec<u8>) {
+    #[case(OutcomeKind::Pass, vec![1, 2])]
+    #[case(OutcomeKind::Failure, vec![9])]
+    fn novel_observation_selects_candidate_bytes(
+        #[case] kind: OutcomeKind,
+        #[case] expected: Vec<u8>,
+    ) {
         let mut search = Search::new(7);
         let observation = Observation {
-            kind: kind.into(),
+            kind,
             canonical: Some(vec![1, 2]),
             features: vec!["branch-a".into()],
             ..Observation::default()
@@ -155,7 +158,7 @@ mod tests {
     fn rejected_observation_does_not_change_corpus_or_features() {
         let mut search = Search::new(7);
         let observation = Observation {
-            kind: "reject".into(),
+            kind: OutcomeKind::Reject,
             features: vec!["ignored".into()],
             ..Observation::default()
         };
@@ -195,7 +198,7 @@ mod tests {
         search.features = (0..count).map(|index| index.to_string()).collect();
         search.feature_bytes = bytes;
         let observation = Observation {
-            kind: "pass".into(),
+            kind: OutcomeKind::Pass,
             features: vec![feature],
             ..Observation::default()
         };
@@ -209,7 +212,7 @@ mod tests {
         let mut search = Search::new(0);
         search.restore(vec![vec![0]; MAX_CORPUS]);
         let observation = Observation {
-            kind: "failure".into(),
+            kind: OutcomeKind::Failure,
             features: vec!["new".into()],
             ..Observation::default()
         };
@@ -231,7 +234,7 @@ mod tests {
     ) {
         let mut search = Search::new(0);
         let observation = Observation {
-            kind: "pass".into(),
+            kind: OutcomeKind::Pass,
             features: vec!["new".into()],
             ..Observation::default()
         };
@@ -243,7 +246,7 @@ mod tests {
         #[test]
         fn observing_same_feature_twice_is_idempotent(input in proptest::collection::vec(any::<u8>(), 0..4097), feature in "[a-z]{1,32}") {
             let mut search = Search::new(7);
-            let observation = Observation { kind: "pass".into(), features: vec![feature], ..Observation::default() };
+            let observation = Observation { kind: OutcomeKind::Pass, features: vec![feature], ..Observation::default() };
             search.observe(&input, &observation);
             let corpus = search.corpus().to_vec();
             search.observe(&input, &observation);

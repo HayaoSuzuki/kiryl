@@ -15,28 +15,32 @@ sources:
   revision: 5c4eccb43708bc115c83bc2f468c22758d73b5e1
 - id: product-campaign
   resource: ../../../src/campaign.rs
-  revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+  working_tree: modified
+  sha256: b343b3089fc235d0bf59aafc4c1bff0525892a1f19ea750753432545952e418f
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: 2733ddb6329f3c8c866b575a554a88037c0571c36496b85e580e988d54a7fa26
+  sha256: c15436a45aaddcc608948384a8062e35e3c49b7a87bb7ee1ffe5cdf005633fe2
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
-  sha256: b48d58023e860e66c5bb11a0a4002026835145fdbd5dcfe5d3d4b1b75ad54054
+  sha256: 07b82576503bcce0cb90cb8ef0d41a6fc76f7453aed717c7797304a4aa3c2fd0
 - id: product-python
   resource: ../../../python/kiryl_adapter/worker.py
-  revision: 6d41684763c38d7c649cc32a29b8306d89229fa4
+  working_tree: modified
+  sha256: 1f119992b5514277a8ea165de0d6d6cc44cce5021ce9604189c0a8ddfc6e9690
 - id: product-report
   resource: ../../../src/report.rs
-  revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+  working_tree: modified
+  sha256: 6b1b5c27afd57fcdfdc459d85c93e4d63b37c52eac97f73aadef0b150c7122f4
 - id: product-command
   resource: ../../../src/command.rs
   working_tree: modified
-  sha256: 19c79cef8e8d5b7d7cccb1fd3f60b761d95b292e124148927fc71f1520c0dc7c
+  sha256: 0b94e7bb1af3496e748a14bb7ca615f6d161e30ed52c3fead725e7410ae27d73
 - id: product-verification
   resource: ../../../src/verification.rs
-  revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+  working_tree: modified
+  sha256: c3530e563d93ae709f4b0b98129b86ab8a7e28cf3bb0eb6e938820108d4727e6
 - id: session-operation
   resource: ../work/product-cli/session-operation-design.md
   working_tree: untracked
@@ -268,3 +272,5 @@ knowledge in callers. Reconsider the enum when a real new operation needs a
 different payload; do not add independent nullable control fields.[^session-operation][^product-executor]
 
 [^session-operation]: [Typed session operation design and verification](../work/product-cli/session-operation-design.md).
+
+[The runtime-state contract](runtime-state.md) owns the broader enum/type boundaries, diagnostics and unknown-label compatibility for both implementations.

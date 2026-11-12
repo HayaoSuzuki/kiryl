@@ -12,6 +12,15 @@ pub struct ArtifactStore {
     lock: PathBuf,
     next: u64,
 }
+/// File families have distinct admission and lineage rules.
+#[derive(Clone, Copy)]
+enum ArtifactKind<'a> {
+    Finding,
+    Evidence,
+    Original,
+    Derived(&'a str),
+}
+
 impl ArtifactStore {
     /// Acquire exclusive access without changing existing records.
     /// # Errors
@@ -115,9 +124,15 @@ impl ArtifactStore {
         }
         Ok(())
     }
-    fn save(&mut self, bytes: &[u8], kind: &str) -> io::Result<PathBuf> {
+    fn save(&mut self, bytes: &[u8], kind: ArtifactKind<'_>) -> io::Result<PathBuf> {
+        let prefix = match kind {
+            ArtifactKind::Finding => "finding".into(),
+            ArtifactKind::Evidence => "evidence".into(),
+            ArtifactKind::Original => "original".into(),
+            ArtifactKind::Derived(original) => format!("derived-{original}"),
+        };
         loop {
-            let name = format!("{kind}-{}.bin", self.next);
+            let name = format!("{prefix}-{}.bin", self.next);
             let path = self.root.join(&name);
             self.next = self
                 .next
@@ -150,7 +165,7 @@ impl ArtifactStore {
         if bytes.len() > 1024 * 1024 {
             return Err(io::Error::other("original record exceeds limits"));
         }
-        let path = self.save(&bytes, "finding")?;
+        let path = self.save(&bytes, ArtifactKind::Finding)?;
         // The root was validated as UTF-8 above; save adds only an ASCII name.
         Ok(path.to_string_lossy().into_owned())
     }
@@ -173,7 +188,7 @@ impl ArtifactStore {
         // The validated original is a UTF-8 path whose parent equals this root;
         // save adds only an ASCII name, preserving that representation.
         Ok(self
-            .save(&bytes, "evidence")?
+            .save(&bytes, ArtifactKind::Evidence)?
             .to_string_lossy()
             .into_owned())
     }
@@ -187,7 +202,7 @@ impl ArtifactStore {
     /// # Errors
     /// Returns storage failures; no existing record is overwritten.
     pub fn save_original(&mut self, bytes: &[u8]) -> io::Result<PathBuf> {
-        self.save(bytes, "original")
+        self.save(bytes, ArtifactKind::Original)
     }
     /// Save a separate candidate linked by its original's unique filename.
     /// # Errors
@@ -211,7 +226,7 @@ impl ArtifactStore {
         {
             return Err(io::Error::other("expected original"));
         }
-        self.save(bytes, &format!("derived-{name}"))
+        self.save(bytes, ArtifactKind::Derived(name))
     }
 }
 impl Drop for ArtifactStore {
@@ -419,7 +434,7 @@ pub struct SavedFinding {
 /// Semantic failure evidence, independent of the original record's envelope.
 #[derive(serde::Deserialize)]
 pub struct FindingObservation {
-    pub kind: String,
+    pub kind: crate::executor::OutcomeKind,
     pub fingerprint: Option<String>,
     pub replay_token: Option<Vec<u8>>,
     pub rendered: Option<String>,

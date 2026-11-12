@@ -84,49 +84,70 @@ def test_complete_observation_shape_validates(tmp_path: Path) -> None:
     assert validate(path) == []
 
 
-def test_unrun_cell_and_missing_provenance_rejected(tmp_path: Path) -> None:
+def test_unrun_cell_is_rejected(tmp_path: Path) -> None:
     """Execution records for one interpreter cannot complete another OS/minor."""
     path, record = _record(tmp_path)
     record["completed_cells"] = ["unrun-platform-3.15"]
     path.write_text(json.dumps(record))
     assert validate(path)
-    record["completed_cells"] = []
+
+
+def test_missing_source_provenance_is_rejected(tmp_path: Path) -> None:
+    """A bundle cannot establish identity without its source provenance."""
+    path, record = _record(tmp_path)
     del record["sources"]
     path.write_text(json.dumps(record))
     assert validate(path)
 
 
-def test_storage_overlap_and_nonempty_initial_database_rejected(tmp_path: Path) -> None:
-    """Comparisons need separate parents as well as separate database names."""
+def test_storage_overlap_is_rejected(tmp_path: Path) -> None:
+    """Comparisons require independent database namespaces."""
     path, record = _record(tmp_path)
     runs = cast("list[dict[str, object]]", record["runs"])
-    guided = runs[0]
-    baseline = runs[2]
-    assert guided["database"] != baseline["database"]
-    baseline["database"] = guided["database"]
-    path.write_text(json.dumps(record))
-    assert validate(path)
-    baseline["database"] = f"{baseline['storage']}/database"
-    baseline["initial_database_entries"] = ["existing-choice"]
+    runs[2]["database"] = runs[0]["database"]
     path.write_text(json.dumps(record))
     assert validate(path)
 
 
-def test_report_tampering_and_missing_probe_category_rejected(tmp_path: Path) -> None:
-    """Source/report byte hashes and probe category completeness are required."""
+def test_nonempty_initial_database_is_rejected(tmp_path: Path) -> None:
+    """Previously stored choices invalidate a fresh discovery comparison."""
     path, record = _record(tmp_path)
-    report = tmp_path / "branching-guided/report.json"
-    report.write_text("{}")
+    runs = cast("list[dict[str, object]]", record["runs"])
+    runs[2]["initial_database_entries"] = ["existing-choice"]
+    path.write_text(json.dumps(record))
     assert validate(path)
+
+
+def test_report_tampering_is_rejected(tmp_path: Path) -> None:
+    """A source hash cannot certify report bytes changed after recording."""
+    path, _ = _record(tmp_path)
+    (tmp_path / "branching-guided/report.json").write_text("{}")
+    assert validate(path)
+
+
+def test_missing_probe_category_is_rejected(tmp_path: Path) -> None:
+    """A complete comparison retains every required acceptance category."""
+    path, record = _record(tmp_path)
     probes = cast("dict[str, str]", record["probes"])
     del probes["crash"]
     path.write_text(json.dumps(record))
     assert validate(path)
 
 
-@pytest.mark.parametrize("contradiction", ["skipped", "failure", "missing"])
-def test_probe_declarations_must_match_junit(tmp_path: Path, contradiction: str) -> None:
-    """A valid hash cannot promote failed, skipped or absent testcases to passed."""
+@pytest.mark.parametrize(("field", "value"), [("mode", "unknown"), ("target", "unknown")])
+def test_unknown_comparison_labels_are_rejected(tmp_path: Path, field: str, value: str) -> None:
+    """Unknown external routing labels cannot create a complete comparison."""
+    path, record = _record(tmp_path)
+    runs = cast("list[dict[str, object]]", record["runs"])
+    runs[0][field] = value
+    path.write_text(json.dumps(record))
+    assert "invalid comparison mode/target" in validate(path)
+
+
+@pytest.fixture(params=["skipped", "failure", "missing"])
+def contradictory_probe_record(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
+    """Build one independently selected contradictory JUnit report fixture."""
+    contradiction = request.param
     from evidence import PROBE_TESTS  # noqa: PLC0415 -- shared extraction contract
 
     path, record = _record(tmp_path)
@@ -158,4 +179,9 @@ def test_probe_declarations_must_match_junit(tmp_path: Path, contradiction: str)
         f"{sys.platform}-{sys.version_info.major}.{sys.version_info.minor}"
     ]
     path.write_text(json.dumps(record))
-    assert "probe declarations contradict JUnit outcomes" in validate(path)
+    return path
+
+
+def test_probe_declarations_must_match_junit(contradictory_probe_record: Path) -> None:
+    """A valid hash cannot promote failed, skipped or absent testcases to passed."""
+    assert "probe declarations contradict JUnit outcomes" in validate(contradictory_probe_record)

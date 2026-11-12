@@ -1,7 +1,7 @@
 # Copyright (c) 2026 kiryl contributors
 """Exact-version integration seam; no Hypothesis implementation types escape it.
 
-The public fuzz handle cannot bind pytest's remaining arguments. This experiment
+The public fuzz handle cannot bind pytest's remaining arguments. The adapter
 constructs the same execution context with explicit fixture/self bindings instead.
 Source API reference: Hypothesis 6.170.13 core.py (MPL-2.0), inspected locally.
 """
@@ -37,6 +37,8 @@ from hypothesis.internal.escalation import InterestingOrigin
 from hypothesis.internal.reflection import function_digest
 from hypothesis.stateful import get_state_machine_test
 
+from model import ReplayKind, ResultKind, Verification
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -57,7 +59,7 @@ class _ReplayEnvelope(TypedDict):
     python: list[int]
     nodeid: str
     pytest_args: list[str]
-    kind: str
+    kind: ReplayKind
     payload: str
     fingerprint: NotRequired[str]
     prefix: NotRequired[list[_Prefix]]
@@ -76,7 +78,7 @@ class _Wrapped(Protocol):
 class Evaluation:
     """One bounded execution's outcome, without Hypothesis-owned objects."""
 
-    kind: str
+    kind: ResultKind
     canonical: bytes | None = None
     fingerprint: str | None = None
     replay_token: bytes | None = None
@@ -93,7 +95,7 @@ class ShrinkEvidence:
     fingerprint: str
     complete: bool
     rendered: str | None = None
-    verification: str = "pending"
+    verification: Verification = Verification.PENDING
 
 
 def unpack_token(token: bytes) -> _ReplayEnvelope:
@@ -111,6 +113,11 @@ def unpack_token(token: bytes) -> _ReplayEnvelope:
     ):
         message = "incompatible replay token"
         raise ValueError(message)
+    try:
+        value["kind"] = ReplayKind(value["kind"])
+    except ValueError as error:
+        message = "unknown replay token kind"
+        raise ValueError(message) from error
     return cast("_ReplayEnvelope", value)
 
 
@@ -156,7 +163,7 @@ class BoundTarget:
             thread_overlap={},
         )
 
-    def token(self, kind: str, payload: str, **extra: object) -> bytes:
+    def token(self, kind: ReplayKind, payload: str, **extra: object) -> bytes:
         """Wrap replay bytes with test, environment, and invocation identity."""
         return json.dumps(
             {
@@ -176,7 +183,7 @@ class BoundTarget:
         data = ConjectureData(
             random=None, provider=BytestringProvider, provider_kw={"bytestring": buffer}
         )
-        return self.evaluate(data, self.token("raw", buffer.hex()))
+        return self.evaluate(data, self.token(ReplayKind.RAW, buffer.hex()))
 
     def evaluate(
         self, data: ConjectureData, token: bytes, *, freeze: bool = True, persist: bool = True
@@ -185,7 +192,7 @@ class BoundTarget:
         try:
             self.state.execute_once(data)
             return Evaluation(
-                "pass",
+                ResultKind.PASS,
                 canonical=(
                     bytes(data.provider.drawn)
                     if isinstance(data.provider, BytestringProvider)
@@ -193,9 +200,9 @@ class BoundTarget:
                 ),
             )
         except skip_exceptions_to_reraise():
-            return Evaluation("skip")
+            return Evaluation(ResultKind.SKIP)
         except StopTest, UnsatisfiedAssumption:
-            return Evaluation("reject")
+            return Evaluation(ResultKind.REJECT)
         except InvalidArgument, FailedHealthCheck:
             raise
         except failure_exceptions_to_catch() as error:
@@ -210,7 +217,7 @@ class BoundTarget:
             envelope = unpack_token(token)
             envelope["fingerprint"] = str(origin)
             return Evaluation(
-                "failure",
+                ResultKind.FAILURE,
                 fingerprint=str(origin),
                 replay_token=json.dumps(envelope).encode(),
                 rendered=f"{representation}\n{type(error).__name__} at {location}",
@@ -226,11 +233,8 @@ class BoundTarget:
         if value["nodeid"] != self.item.nodeid:
             message = "replay token target mismatch"
             raise ValueError(message)
-        if value["kind"] == "raw":
+        if value["kind"] == ReplayKind.RAW:
             return self.check(bytes.fromhex(value["payload"]))
-        if value["kind"] != "choices":
-            message = "unknown replay token kind"
-            raise ValueError(message)
         prefix = []
         for encoded in value.get("prefix", []):
             if "template" in encoded:
@@ -265,7 +269,7 @@ class BoundTarget:
             else:
                 prefix.append({"choice": choices_to_bytes((choice,)).hex()})
         return self.token(
-            "choices",
+            ReplayKind.CHOICES,
             "",
             prefix=prefix,
             max_choices=data.max_choices,
@@ -291,10 +295,10 @@ class BoundTarget:
         result = ShrinkEvidence(
             original, original, fingerprint, complete=False, rendered=observed.rendered
         )
-        if observed.kind != "failure" or observed.fingerprint != fingerprint:
-            result.verification = "unstable"
+        if observed.kind != ResultKind.FAILURE or observed.fingerprint != fingerprint:
+            result.verification = Verification.UNSTABLE
             return result
-        result.verification = "confirmed"
+        result.verification = Verification.CONFIRMED
         representations: dict[bytes, str | None] = {}
 
         def execute(data: ConjectureData) -> None:
@@ -305,7 +309,7 @@ class BoundTarget:
             if time.monotonic() >= deadline:
                 raise _BudgetExpiredError
             evaluation = self.evaluate(data, token, freeze=False, persist=False)
-            if evaluation.kind == "failure" and evaluation.fingerprint == fingerprint:
+            if evaluation.kind == ResultKind.FAILURE and evaluation.fingerprint == fingerprint:
                 representations[choices_to_bytes(data.choices)] = evaluation.rendered
                 data.mark_interesting(self.last_origin)
 
@@ -366,18 +370,18 @@ def _measure_handle(
     @wraps(original)
     def measured(*args: object, **kwargs: object) -> object:
         before()
-        outcome = Evaluation("pass")
+        outcome = Evaluation(ResultKind.PASS)
         try:
             return original(*args, **kwargs)
         except skip_exceptions_to_reraise():
-            outcome = Evaluation("skip")
+            outcome = Evaluation(ResultKind.SKIP)
             raise
         except StopTest, UnsatisfiedAssumption:
-            outcome = Evaluation("reject")
+            outcome = Evaluation(ResultKind.REJECT)
             raise
         except failure_exceptions_to_catch() as error:
             outcome = Evaluation(
-                "failure", fingerprint=str(InterestingOrigin.from_exception(error))
+                ResultKind.FAILURE, fingerprint=str(InterestingOrigin.from_exception(error))
             )
             raise
         finally:

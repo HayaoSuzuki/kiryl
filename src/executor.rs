@@ -5,7 +5,7 @@ use crate::{
     artifacts::ArtifactStore,
     resource,
     search::Search,
-    verification::{FailureIdentity, Verdict},
+    verification::{FailureIdentity, Verdict, Verification},
     wire,
 };
 use serde::{Deserialize, Serialize};
@@ -73,17 +73,58 @@ pub(crate) struct ExecutionSettings {
     pub identity: Value,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Reproduction {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reproduction {
     Replay,
     Minimize,
 }
-impl Reproduction {
-    fn report_mode(self) -> &'static str {
+/// Report operation, distinct from the adapter's run/replay/minimize start mode.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ExecutionMode {
+    #[default]
+    Empty,
+    Guided,
+    Reproduction(Reproduction),
+}
+
+impl Serialize for ExecutionMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            Self::Replay => "replay",
-            Self::Minimize => "minimize",
+            Self::Empty => serializer.serialize_str(""),
+            Self::Guided => serializer.serialize_str("guided"),
+            Self::Reproduction(mode) => mode.serialize(serializer),
         }
+    }
+}
+
+/// The control discriminator is decoded once; malformed and future labels follow
+/// the same unexpected-frame diagnostic as version 1.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkerControlKind {
+    Ready,
+    Next,
+    ReplayCase,
+    Result,
+    Skipped,
+    Candidate,
+    Shrunk,
+    Done,
+    Error,
+    Start,
+    End,
+    Case,
+    Ack,
+    #[serde(other)]
+    Unknown,
+}
+impl WorkerControlKind {
+    fn decode(label: &Value) -> Self {
+        let Value::String(_) = label else {
+            return Self::Unknown;
+        };
+        serde_json::from_value(label.clone()).unwrap_or(Self::Unknown)
     }
 }
 
@@ -106,31 +147,93 @@ impl SessionOperation<'_> {
             Self::Replay(token) => ("replay", Some(token)),
             Self::Minimize(token) => ("minimize", Some(token)),
         };
-        json!({"kind":"start","pytest_args":selection,"test_id":test_id,
+        json!({"kind":WorkerControlKind::Start,"pytest_args":selection,"test_id":test_id,
             "mode":mode,"token":token,"budget_seconds":budget_seconds})
+    }
+}
+
+/// Classification shared by worker observations, persisted findings and report policy.
+/// Unknown version-1 labels retain their exact identity; admission remains separate.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(from = "String", into = "String")]
+pub enum OutcomeKind {
+    Pass,
+    Reject,
+    Skip,
+    Failure,
+    Oom,
+    NativeCrash,
+    CaseTimeout,
+    CampaignCancelled,
+    Interrupted,
+    Infrastructure,
+    Other(String),
+}
+impl Default for OutcomeKind {
+    fn default() -> Self {
+        Self::Other(String::new())
+    }
+}
+impl From<String> for OutcomeKind {
+    fn from(label: String) -> Self {
+        match label.as_str() {
+            "pass" => Self::Pass,
+            "reject" => Self::Reject,
+            "skip" => Self::Skip,
+            "failure" => Self::Failure,
+            "oom" => Self::Oom,
+            "native_crash" => Self::NativeCrash,
+            "case_timeout" => Self::CaseTimeout,
+            "campaign_cancelled" => Self::CampaignCancelled,
+            "interrupted" => Self::Interrupted,
+            "infrastructure" => Self::Infrastructure,
+            _ => Self::Other(label),
+        }
+    }
+}
+impl From<&str> for OutcomeKind {
+    fn from(label: &str) -> Self {
+        label.to_owned().into()
+    }
+}
+impl From<OutcomeKind> for String {
+    fn from(kind: OutcomeKind) -> Self {
+        match kind {
+            OutcomeKind::Pass => "pass".into(),
+            OutcomeKind::Reject => "reject".into(),
+            OutcomeKind::Skip => "skip".into(),
+            OutcomeKind::Failure => "failure".into(),
+            OutcomeKind::Oom => "oom".into(),
+            OutcomeKind::NativeCrash => "native_crash".into(),
+            OutcomeKind::CaseTimeout => "case_timeout".into(),
+            OutcomeKind::CampaignCancelled => "campaign_cancelled".into(),
+            OutcomeKind::Interrupted => "interrupted".into(),
+            OutcomeKind::Infrastructure => "infrastructure".into(),
+            OutcomeKind::Other(label) => label,
+        }
     }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Observation {
-    pub kind: String,
+    pub kind: OutcomeKind,
     pub canonical: Option<Vec<u8>>,
     pub fingerprint: Option<String>,
     pub replay_token: Option<Vec<u8>>,
     pub rendered: Option<String>,
     pub features: Vec<String>,
-    pub verification: String,
+    pub verification: Verification,
     pub elapsed_ns: u64,
 }
 #[derive(Debug, Serialize)]
 pub struct Outcome {
     pub test_id: String,
     pub case_id: u64,
-    pub kind: String,
+    pub kind: OutcomeKind,
     pub original: Option<String>,
     pub derived: Vec<String>,
-    pub verification: String,
+    pub verification: Verification,
     pub detail: Option<String>,
 }
 #[derive(Debug, Default, Serialize)]
@@ -172,9 +275,9 @@ pub struct ExecutionReport {
     pub rejected: u64,
     pub interrupted: bool,
     pub elapsed_ms: u128,
-    pub capabilities: Value,
+    pub capabilities: Option<resource::Capabilities>,
     pub environment: Value,
-    pub mode: String,
+    pub mode: ExecutionMode,
     pub seed: u64,
     pub branches: usize,
     pub corpus_entries: usize,
@@ -195,10 +298,10 @@ impl ExecutionReport {
             self.outcomes.push(Outcome {
                 test_id: target.into(),
                 case_id: 0,
-                kind: "infrastructure".into(),
+                kind: OutcomeKind::Infrastructure,
                 original: None,
                 derived: vec![],
-                verification: format!("cleanup failed: {error}"),
+                verification: Verification::Diagnostic(format!("cleanup failed: {error}")),
                 detail: None,
             });
         }
@@ -207,13 +310,13 @@ impl ExecutionReport {
 
 /// Deterministic budget precedence shared by live supervision and model tests.
 #[must_use]
-pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<&'static str> {
+pub fn expiry(interrupted: bool, campaign: bool, case: bool) -> Option<OutcomeKind> {
     if interrupted {
-        Some("interrupted")
+        Some(OutcomeKind::Interrupted)
     } else if campaign {
-        Some("campaign_cancelled")
+        Some(OutcomeKind::CampaignCancelled)
     } else if case {
-        Some("case_timeout")
+        Some(OutcomeKind::CaseTimeout)
     } else {
         None
     }
@@ -402,19 +505,24 @@ impl Executor {
         let start = Instant::now();
         let mut report = ExecutionReport {
             version: 1,
-            mode: "guided".into(),
+            mode: ExecutionMode::Guided,
             seed: config.seed,
-            capabilities: serde_json::to_value(resource::detect()).map_err(io::Error::from)?,
+            capabilities: Some(resource::detect()),
             ..ExecutionReport::default()
         };
-        if !config.limits.allow_best_effort && report.capabilities["tree_memory_hard"] != true {
+        if !config.limits.allow_best_effort
+            && !report
+                .capabilities
+                .as_ref()
+                .is_some_and(|caps| caps.tree_memory_hard)
+        {
             report.outcomes.push(Outcome {
                 test_id: String::new(),
                 case_id: 0,
-                kind: "infrastructure".into(),
+                kind: OutcomeKind::Infrastructure,
                 original: None,
                 derived: vec![],
-                verification: "hard memory backend unavailable".into(),
+                verification: Verification::Diagnostic("hard memory backend unavailable".into()),
                 detail: None,
             });
             return Ok(report);
@@ -440,7 +548,7 @@ impl Executor {
                 .iter()
                 .rposition(|o| o.original == result.original && o.kind == observed.kind)
                 .unwrap_or(report.outcomes.len().saturating_sub(1));
-            if observed.kind == "failure"
+            if observed.kind == OutcomeKind::Failure
                 && let (Some(token), Some(original)) = (&observed.replay_token, &result.original)
                 && !self.cancelled(&config, start)
             {
@@ -460,7 +568,10 @@ impl Executor {
                 report.outcomes[index].verification = verification.candidate_status().into();
                 if let Some(value) = verified.observation {
                     let path = store
-                        .derived(original, &json!({"mode": "replay", "observation": value}))
+                        .derived(
+                            original,
+                            &json!({"mode": Reproduction::Replay, "observation": value}),
+                        )
                         .map_err(ExecutionError::Storage)?;
                     report.outcomes[index].derived.push(path);
                 }
@@ -508,8 +619,10 @@ impl Executor {
                     }
                 }
             }
-            if ["native_crash", "case_timeout"].contains(&observed.kind.as_str())
-                && let Some(original) = &result.original
+            if matches!(
+                observed.kind,
+                OutcomeKind::NativeCrash | OutcomeKind::CaseTimeout
+            ) && let Some(original) = &result.original
                 && !self.cancelled(&config, start)
             {
                 let replay_invocation = Invocation {
@@ -582,7 +695,7 @@ impl Executor {
 
         let mut report = ExecutionReport {
             version: 1,
-            mode: mode.report_mode().into(),
+            mode: ExecutionMode::Reproduction(mode),
             ..ExecutionReport::default()
         };
         let start = Instant::now();
@@ -597,15 +710,15 @@ impl Executor {
         )?;
         report.operation_observation.clone_from(&result.observation);
         let identity = FailureIdentity::saved(&source.observation);
-        let mut verification = "pending";
+        let mut verification = Verdict::Pending;
         let mut paths = vec![];
         if let Some(observation) = &result.observation {
-            verification = identity.check(Some(observation)).status();
+            verification = identity.check(Some(observation));
             paths.push(
                 store
                     .derived(
                         original,
-                        &json!({"mode":mode.report_mode(),"observation":observation,"verification":verification}),
+                        &json!({"mode":ExecutionMode::Reproduction(mode),"observation":observation,"verification":verification}),
                     )
                     .map_err(ExecutionError::Storage)?,
             );
@@ -691,7 +804,7 @@ impl Executor {
                     kind: observation.kind.clone(),
                     original: None,
                     derived: vec![],
-                    verification: "pending".into(),
+                    verification: Verdict::Pending.into(),
                     detail: observation.rendered.clone(),
                 });
                 return Ok(RunResult {
@@ -702,8 +815,7 @@ impl Executor {
                 });
             }
         };
-        report.capabilities =
-            serde_json::to_value(worker.resource.capabilities()).map_err(io::Error::from)?;
+        report.capabilities = Some(worker.resource.capabilities().clone());
         let mut raw_dispatched = false;
         let mut active: Option<(u64, Vec<u8>, Instant)> = None;
         let mut observed = None;
@@ -725,8 +837,8 @@ impl Executor {
             });
             if let Some(reason) = expiry(interruption, campaign_expired, case_expired) {
                 observed = Some(Observation {
-                    kind: reason.into(),
-                    verification: "pending".into(),
+                    kind: reason,
+                    verification: Verdict::Pending.into(),
                     ..Observation::default()
                 });
                 break;
@@ -754,9 +866,9 @@ impl Executor {
                     closed_at = Some(Instant::now());
                 }
                 Ok(Ok(Some(message))) => {
-                    let kind = message["kind"].as_str().unwrap_or("");
+                    let kind = WorkerControlKind::decode(&message["kind"]);
                     match (kind, mode) {
-                        ("ready", _) if !ready => {
+                        (WorkerControlKind::Ready, _) if !ready => {
                             ready = true;
                             let environment = message["environment"].clone();
                             if report.environment.is_null() {
@@ -779,9 +891,10 @@ impl Executor {
                                 budget,
                             ));
                         }
-                        ("next", SessionOperation::Explore | SessionOperation::RawReplay)
-                            if ready && active.is_none() =>
-                        {
+                        (
+                            WorkerControlKind::Next,
+                            SessionOperation::Explore | SessionOperation::RawReplay,
+                        ) if ready && active.is_none() => {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
                                 observed = Some(infrastructure("test ID mismatch"));
                                 break;
@@ -791,7 +904,7 @@ impl Executor {
                                 || observed.is_some()
                                 || (matches!(mode, SessionOperation::RawReplay) && raw_dispatched)
                             {
-                                worker.enqueue(json!({"kind": "end"}));
+                                worker.enqueue(json!({"kind": WorkerControlKind::End}));
                             } else {
                                 let input = search.as_deref_mut().map_or_else(
                                     || invocation.raw_input.clone().unwrap_or_default(),
@@ -808,11 +921,11 @@ impl Executor {
                                 active = Some((id, input.clone(), Instant::now()));
                                 raw_dispatched = true;
                                 worker.enqueue(
-                                    json!({"kind": "case", "case_id": id, "input": input}),
+                                    json!({"kind": WorkerControlKind::Case, "case_id": id, "input": input}),
                                 );
                             }
                         }
-                        ("replay_case", SessionOperation::Replay(token))
+                        (WorkerControlKind::ReplayCase, SessionOperation::Replay(token))
                             if ready && active.is_none() =>
                         {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
@@ -820,9 +933,9 @@ impl Executor {
                                 break;
                             }
                             active = Some((0, token.to_vec(), Instant::now()));
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(json!({"kind": WorkerControlKind::Ack}));
                         }
-                        ("skipped", _) if ready => {
+                        (WorkerControlKind::Skipped, _) if ready => {
                             if message["observation"]["nodeid"].as_str()
                                 != Some(&invocation.test_id)
                                 || active.as_ref().is_some_and(|(id, _, _)| {
@@ -834,25 +947,25 @@ impl Executor {
                             }
                             active = None;
                             observed = Some(Observation {
-                                kind: "skip".into(),
-                                verification: "unstable".into(),
+                                kind: OutcomeKind::Skip,
+                                verification: Verdict::Unstable.into(),
                                 ..Observation::default()
                             });
                             if matches!(mode, SessionOperation::Explore) {
                                 report.outcomes.push(Outcome {
                                     test_id: invocation.test_id.clone(),
                                     case_id: 0,
-                                    kind: "skip".into(),
+                                    kind: OutcomeKind::Skip,
                                     original: None,
                                     derived: vec![],
-                                    verification: "pending".into(),
+                                    verification: Verdict::Pending.into(),
                                     detail: None,
                                 });
                             }
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(json!({"kind": WorkerControlKind::Ack}));
                         }
                         (
-                            "result",
+                            WorkerControlKind::Result,
                             SessionOperation::Explore
                             | SessionOperation::Replay(_)
                             | SessionOperation::RawReplay,
@@ -891,12 +1004,13 @@ impl Executor {
                                 if let Some(search) = search.as_deref_mut() {
                                     search.observe(input, &value);
                                 }
-                                if value.kind == "reject" {
+                                if value.kind == OutcomeKind::Reject {
                                     report.rejected += 1;
                                 } else {
                                     report.useful += 1;
                                 }
-                                let new_finding = ["failure", "oom"].contains(&value.kind.as_str());
+                                let new_finding =
+                                    matches!(value.kind, OutcomeKind::Failure | OutcomeKind::Oom);
                                 if new_finding {
                                     report
                                         .first_discovery_ms
@@ -920,7 +1034,7 @@ impl Executor {
                                         kind: value.kind.clone(),
                                         original: original.clone(),
                                         derived: vec![],
-                                        verification: "pending".into(),
+                                        verification: Verdict::Pending.into(),
                                         detail: value.rendered.clone(),
                                     });
                                 }
@@ -928,28 +1042,28 @@ impl Executor {
                                 observed = Some(value);
                             }
                             active = None;
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(json!({"kind": WorkerControlKind::Ack}));
                         }
-                        ("candidate", SessionOperation::Minimize(_)) if ready => {
+                        (WorkerControlKind::Candidate, SessionOperation::Minimize(_)) if ready => {
                             let candidate: Vec<u8> =
                                 serde_json::from_value(message["token"].clone())
                                     .map_err(io::Error::from)?;
                             // Retain the entire opaque token before authorizing its execution.
                             active = Some((0, candidate, Instant::now()));
-                            worker.enqueue(json!({"kind": "ack"}));
+                            worker.enqueue(json!({"kind": WorkerControlKind::Ack}));
                         }
-                        ("shrunk", SessionOperation::Minimize(_)) if ready => {
+                        (WorkerControlKind::Shrunk, SessionOperation::Minimize(_)) if ready => {
                             // Caller owns original lineage; return a separate record for this attempt.
-                            derived.push(json!({"mode": "minimize", "token": message["token"], "complete": message["complete"], "verification": "pending"}));
+                            derived.push(json!({"mode": Reproduction::Minimize, "token": message["token"], "complete": message["complete"], "verification": Verdict::Pending}));
                             active = None;
                         }
-                        ("done", _) if ready => {
+                        (WorkerControlKind::Done, _) if ready => {
                             if active.is_some() {
                                 observed = Some(infrastructure("done with an active case"));
                             }
                             break;
                         }
-                        ("error", _) => {
+                        (WorkerControlKind::Error, _) => {
                             observed = Some(infrastructure(
                                 message["message"].as_str().unwrap_or("worker error"),
                             ));
@@ -989,9 +1103,9 @@ impl Executor {
                         observed =
                             Some(if active.is_some() && status.is_some_and(native_failure) {
                                 Observation {
-                                    kind: "native_crash".into(),
+                                    kind: OutcomeKind::NativeCrash,
                                     rendered: status.map(|s| s.to_string()),
-                                    verification: "pending".into(),
+                                    verification: Verdict::Pending.into(),
                                     ..Observation::default()
                                 }
                             } else {
@@ -1017,20 +1131,29 @@ impl Executor {
             report.logs[0].merge(&log, config.limits.retained_output_bytes);
         }
         if let Some(value) = &observed {
-            let failure = !(["pass", "reject", "skip", "failure"].contains(&value.kind.as_str())
-                || value.kind == "oom" && original.is_some());
+            let failure = !(matches!(
+                value.kind,
+                OutcomeKind::Pass | OutcomeKind::Reject | OutcomeKind::Skip | OutcomeKind::Failure
+            ) || value.kind == OutcomeKind::Oom && original.is_some());
             if matches!(mode, SessionOperation::Minimize(_))
                 && let Some((_, candidate, _)) = &active
             {
                 derived
-                    .push(json!({"mode": "minimize", "active_token": candidate, "outcome": value}));
+                    .push(json!({"mode": Reproduction::Minimize, "active_token": candidate, "outcome": value}));
             }
             if failure
                 && (matches!(mode, SessionOperation::Explore)
-                    || ["infrastructure", "campaign_cancelled", "interrupted"]
-                        .contains(&value.kind.as_str()))
+                    || matches!(
+                        value.kind,
+                        OutcomeKind::Infrastructure
+                            | OutcomeKind::CampaignCancelled
+                            | OutcomeKind::Interrupted
+                    ))
             {
-                if ["native_crash", "case_timeout", "oom"].contains(&value.kind.as_str()) {
+                if matches!(
+                    value.kind,
+                    OutcomeKind::NativeCrash | OutcomeKind::CaseTimeout | OutcomeKind::Oom
+                ) {
                     report
                         .first_discovery_ms
                         .get_or_insert(campaign_start.elapsed().as_millis());
@@ -1055,7 +1178,7 @@ impl Executor {
                     kind: value.kind.clone(),
                     original: original.clone(),
                     derived: vec![],
-                    verification: "pending".into(),
+                    verification: Verdict::Pending.into(),
                     detail: value.rendered.clone(),
                 });
             }
@@ -1151,11 +1274,13 @@ fn decode_unix_exit(code: i32, value: i32) -> io::Result<std::process::ExitStatu
 // retaining its diagnostic and reproduction payload. Unknown labels need evidence.
 fn admit_observation(mut value: Observation, oom: bool) -> Option<Observation> {
     if oom {
-        value.kind = "oom".into();
+        value.kind = OutcomeKind::Oom;
     }
-    ["pass", "reject", "failure", "oom"]
-        .contains(&value.kind.as_str())
-        .then_some(value)
+    matches!(
+        value.kind,
+        OutcomeKind::Pass | OutcomeKind::Reject | OutcomeKind::Failure | OutcomeKind::Oom
+    )
+    .then_some(value)
 }
 
 // No positive evidence leaves classification open. OOM during an active case is
@@ -1166,8 +1291,12 @@ fn resource_observation(evidence: io::Result<bool>, active: bool) -> Option<Obse
     match evidence {
         Ok(false) => None,
         Ok(true) => Some(Observation {
-            kind: if active { "oom" } else { "infrastructure" }.into(),
-            verification: "pending".into(),
+            kind: if active {
+                OutcomeKind::Oom
+            } else {
+                OutcomeKind::Infrastructure
+            },
+            verification: Verdict::Pending.into(),
             ..Observation::default()
         }),
         Err(error) => Some(infrastructure(&format!("resource evidence: {error}"))),
@@ -1176,9 +1305,9 @@ fn resource_observation(evidence: io::Result<bool>, active: bool) -> Option<Obse
 
 fn infrastructure(message: &str) -> Observation {
     Observation {
-        kind: "infrastructure".into(),
+        kind: OutcomeKind::Infrastructure,
         rendered: Some(message.into()),
-        verification: "pending".into(),
+        verification: Verdict::Pending.into(),
         ..Observation::default()
     }
 }
@@ -1742,7 +1871,7 @@ mod tests {
             .unwrap();
         fault.cleanup().unwrap();
         let outcome = report.outcomes.last().unwrap();
-        assert_eq!(outcome.kind, "infrastructure");
+        assert_eq!(outcome.kind, OutcomeKind::Infrastructure);
         assert!(
             outcome
                 .detail
@@ -1860,8 +1989,25 @@ mod tests {
             io::Error::from_raw_os_error(libc::EACCES).to_string()
         );
     }
+    #[rstest::rstest]
+    #[case(json!("ready"), WorkerControlKind::Ready)]
+    #[case(json!("future"), WorkerControlKind::Unknown)]
+    #[case(json!(null), WorkerControlKind::Unknown)]
+    #[case(json!(17), WorkerControlKind::Unknown)]
+    #[case(json!({"ready":null}), WorkerControlKind::Unknown)]
+    fn control_labels_are_decoded_at_boundary(
+        #[case] label: Value,
+        #[case] expected: WorkerControlKind,
+    ) {
+        assert_eq!(WorkerControlKind::decode(&label), expected);
+    }
+
     #[cfg(unix)]
     #[rstest::rstest]
+    #[case(SessionOperation::Explore, vec![json!({})], "unexpected control frame")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":null})], "unexpected control frame")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":17})], "unexpected control frame")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":{"ready":null}})], "unexpected control frame")]
     #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"other"})], "test ID mismatch")]
     #[case(SessionOperation::Replay(&[9]), vec![json!({"kind":"replay_case","test_id":"other"})], "replay test ID mismatch")]
     #[case(SessionOperation::Explore, vec![json!({"kind":"skipped","observation":{"nodeid":"other"}})], "skip correlation mismatch")]
@@ -1882,7 +2028,7 @@ mod tests {
         let fixture = SessionFixture::new(&frames);
         let result = fixture.run(mode, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "infrastructure");
+        assert_eq!(observation.kind, OutcomeKind::Infrastructure);
         assert_eq!(observation.rendered.as_deref(), Some(expected));
     }
     #[cfg(unix)]
@@ -1910,7 +2056,7 @@ mod tests {
             json!({"kind":"done"}),
         ]);
         let result = fixture.run(mode, &mut ExecutionReport::default());
-        assert_eq!(result.observation.unwrap().kind, "skip");
+        assert_eq!(result.observation.unwrap().kind, OutcomeKind::Skip);
     }
     #[cfg(unix)]
     #[test]
@@ -1919,7 +2065,7 @@ mod tests {
         fixture.config.python = fixture.root.join("missing");
         let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "infrastructure");
+        assert_eq!(observation.kind, OutcomeKind::Infrastructure);
         assert!(
             observation
                 .rendered
@@ -2008,9 +2154,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             report.outcomes[0].verification,
-            "hard memory backend unavailable"
+            Verification::Diagnostic("hard memory backend unavailable".into())
         );
-        assert_eq!(report.outcomes[0].kind, "infrastructure");
+        assert_eq!(report.outcomes[0].kind, OutcomeKind::Infrastructure);
     }
     #[cfg(unix)]
     #[test]
@@ -2024,7 +2170,10 @@ mod tests {
             SessionOperation::Minimize(&[9]),
             &mut ExecutionReport::default(),
         );
-        assert_eq!(result.observation.unwrap().kind, "infrastructure");
+        assert_eq!(
+            result.observation.unwrap().kind,
+            OutcomeKind::Infrastructure
+        );
         assert_eq!(result.derived[0]["active_token"], json!([1, 2, 3]));
         assert_eq!(
             result.derived[0]["outcome"]["rendered"],
@@ -2045,7 +2194,7 @@ mod tests {
             &mut ExecutionReport::default(),
         );
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "pass", "{observation:?}");
+        assert_eq!(observation.kind, OutcomeKind::Pass, "{observation:?}");
         assert!(result.retained_input.is_none());
     }
     #[cfg(target_os = "macos")]
@@ -2172,7 +2321,7 @@ mod tests {
             .explore("test", fixture.config.clone())
             .unwrap();
         let outcome = &report.outcomes[0];
-        assert_eq!(outcome.verification, "confirmed");
+        assert_eq!(outcome.verification, Verdict::Confirmed.into());
         assert_eq!(outcome.derived.len(), 3);
         assert_eq!(
             persisted_evidence(&outcome.derived[1])["verification"],
@@ -2214,7 +2363,7 @@ mod tests {
         let outcome = report.outcomes.last().unwrap();
         assert_eq!(
             outcome.verification,
-            expected,
+            expected.into(),
             "{}",
             serde_json::to_string(&report).unwrap()
         );
@@ -2320,8 +2469,8 @@ mod tests {
         });
         let expected = expected.map(|(kind, verification, rendered)| {
             (
-                kind.to_owned(),
-                verification.to_owned(),
+                kind.into(),
+                verification.into(),
                 rendered.map(str::to_owned),
             )
         });
@@ -2339,10 +2488,10 @@ mod tests {
             outcomes: vec![Outcome {
                 test_id: "test".into(),
                 case_id: 7,
-                kind: "failure".into(),
+                kind: OutcomeKind::Failure,
                 original: Some("finding-0.bin".into()),
                 derived: vec!["evidence-1.bin".into()],
-                verification: "pending".into(),
+                verification: Verdict::Pending.into(),
                 detail: Some("original assertion".into()),
             }],
             ..ExecutionReport::default()
@@ -2353,12 +2502,12 @@ mod tests {
         assert_eq!(serde_json::to_value(&report.outcomes[0]).unwrap(), original);
         let cleanup = report.outcomes.get(1);
         assert_eq!(
-            cleanup.map(|outcome| outcome.verification.as_str()),
-            verification
+            cleanup.map(|outcome| outcome.verification.clone()),
+            verification.map(Verification::from)
         );
         assert_eq!(
-            cleanup.map(|outcome| outcome.kind.as_str()),
-            verification.map(|_| "infrastructure")
+            cleanup.map(|outcome| &outcome.kind),
+            verification.map(|_| &OutcomeKind::Infrastructure)
         );
         assert_eq!(
             cleanup.map(|outcome| outcome.test_id.as_str()),
@@ -2475,7 +2624,7 @@ mod tests {
         ]);
         let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, kind, "{observation:?}");
+        assert_eq!(observation.kind, kind.into(), "{observation:?}");
         assert_eq!(result.retained_input, retained);
         assert_eq!(result.original.is_some(), retained.is_some());
     }
@@ -2493,7 +2642,11 @@ mod tests {
         std::fs::write(&fixture.config.python, script).unwrap();
         let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.kind,
+            OutcomeKind::Infrastructure,
+            "{observation:?}"
+        );
         assert_eq!(
             observation.rendered.as_deref(),
             Some("worker exited before orderly session completion")
@@ -2516,7 +2669,11 @@ mod tests {
         std::fs::write(&fixture.config.python, script).unwrap();
         let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.kind,
+            OutcomeKind::Infrastructure,
+            "{observation:?}"
+        );
         assert_eq!(
             observation.rendered.as_deref(),
             Some("worker exited before done")
@@ -2612,7 +2769,7 @@ mod tests {
             .explore("test", fixture.config.clone())
             .unwrap();
         let outcome = &report.outcomes[0];
-        assert_eq!(outcome.verification, expected);
+        assert_eq!(outcome.verification, expected.into());
         assert_eq!(outcome.derived.len(), evidence_count);
         assert_eq!(
             std::fs::read_to_string(fixture.root.join("launch-count"))
@@ -2637,7 +2794,7 @@ mod tests {
             .explore("test", fixture.config.clone())
             .unwrap();
         let outcome = &report.outcomes[0];
-        assert_eq!(outcome.verification, "confirmed");
+        assert_eq!(outcome.verification, Verdict::Confirmed.into());
         assert_eq!(outcome.derived.len(), 3);
         let retained = persisted_evidence(&outcome.derived[2]);
         assert_eq!(retained["active_token"], json!([8]));
@@ -2660,7 +2817,7 @@ mod tests {
             .operation(&fixture.config, &original, Reproduction::Minimize)
             .unwrap();
         let outcome = report.outcomes.last().unwrap();
-        assert_eq!(outcome.verification, "pending");
+        assert_eq!(outcome.verification, Verdict::Pending.into());
         assert_eq!(outcome.derived.len(), 3);
         let retained = persisted_evidence(&outcome.derived[2]);
         assert_eq!(retained["active_token"], json!([8]));
@@ -2746,7 +2903,7 @@ mod tests {
             fields[1] == "true",
             fields[2] == "true",
         )
-        .unwrap_or("running");
+        .map_or_else(|| "running".into(), String::from);
         assert_eq!(actual, fields[3]);
     }
     #[rstest::rstest]
@@ -2800,7 +2957,10 @@ mod tests {
     #[case(Reproduction::Replay, "replay")]
     #[case(Reproduction::Minimize, "minimize")]
     fn reproduction_modes_are_closed(#[case] mode: Reproduction, #[case] expected: &str) {
-        assert_eq!(mode.report_mode(), expected);
+        assert_eq!(
+            serde_json::to_value(ExecutionMode::Reproduction(mode)).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -2842,14 +3002,14 @@ mod tests {
         );
     }
     #[rstest::rstest]
-    #[case(false, true, true, Some("campaign_cancelled"))]
-    #[case(true, true, true, Some("interrupted"))]
-    #[case(false, false, true, Some("case_timeout"))]
+    #[case(false, true, true, Some(OutcomeKind::CampaignCancelled))]
+    #[case(true, true, true, Some(OutcomeKind::Interrupted))]
+    #[case(false, false, true, Some(OutcomeKind::CaseTimeout))]
     fn precedence(
         #[case] interrupted: bool,
         #[case] campaign: bool,
         #[case] case: bool,
-        #[case] expected: Option<&str>,
+        #[case] expected: Option<OutcomeKind>,
     ) {
         assert_eq!(expiry(interrupted, campaign, case), expected);
     }
@@ -2941,7 +3101,7 @@ mod tests {
         });
         let expected = expected.map(|kind| {
             (
-                kind.to_owned(),
+                kind.into(),
                 Some("detail".into()),
                 Some("identity".into()),
                 Some(vec![2, 7]),
@@ -2997,7 +3157,11 @@ mod tests {
             )
             .unwrap();
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.kind,
+            OutcomeKind::Infrastructure,
+            "{observation:?}"
+        );
         assert_eq!(
             observation.rendered,
             Some(mpsc::TrySendError::Full(json!(null)).to_string()),
