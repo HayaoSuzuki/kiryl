@@ -201,6 +201,28 @@ fn required_pipe<T>(pipe: Option<T>, diagnostic: &'static str) -> io::Result<T> 
     pipe.ok_or_else(|| io::Error::other(diagnostic))
 }
 
+// Once supervision drops its receiver, stop reading the worker's stream rather
+// than draining output that no remaining owner can classify or retain.
+fn read_events(output: &mut impl Read, send: &mpsc::SyncSender<io::Result<Option<Value>>>) {
+    loop {
+        match wire::read(output) {
+            Ok(Some(value)) => {
+                if send.send(Ok(Some(value))).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {
+                let _ = send.send(Ok(None));
+                break;
+            }
+            Err(error) => {
+                let _ = send.send(Err(error));
+                break;
+            }
+        }
+    }
+}
+
 struct Worker {
     child: Child,
     input: Option<mpsc::SyncSender<Value>>,
@@ -256,25 +278,7 @@ impl Worker {
                 }
             }
         });
-        thread::spawn(move || {
-            loop {
-                match wire::read(&mut output) {
-                    Ok(Some(value)) => {
-                        if send.send(Ok(Some(value))).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(None) => {
-                        let _ = send.send(Ok(None));
-                        break;
-                    }
-                    Err(error) => {
-                        let _ = send.send(Err(error));
-                        break;
-                    }
-                }
-            }
-        });
+        thread::spawn(move || read_events(&mut output, &send));
         let log = Arc::new(Mutex::new(LogTail::default()));
         let sink = Arc::clone(&log);
         let limit = config.limits.retained_output_bytes;
@@ -1549,7 +1553,7 @@ mod tests {
         std::fs::write(
             &fixture.config.python,
             format!(
-                "#!/bin/sh\ncat '{}'\nprintf 'collection diagnostic' >&2\n",
+                "#!/bin/sh\ndd bs=1 count=1 >/dev/null 2>&1\nprintf 'collection diagnostic' >&2\ncat '{}'\n",
                 fixture.root.join("frames").display()
             ),
         )
@@ -2004,6 +2008,86 @@ mod tests {
     #[test]
     fn collection_timeout_keeps_waiting_for_output() {
         assert!(collection_event(Err(mpsc::RecvTimeoutError::Timeout)).is_continue());
+    }
+    #[test]
+    fn reader_stops_consuming_frames_when_event_owner_disappears() {
+        let mut bytes = Vec::new();
+        wire::write(&mut bytes, json!({"kind":"first"})).unwrap();
+        let first_length = bytes.len();
+        wire::write(&mut bytes, json!({"kind":"second"})).unwrap();
+        let mut output = io::Cursor::new(bytes);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        read_events(&mut output, &sender);
+        assert_eq!(output.position(), u64::try_from(first_length).unwrap());
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::matching(1, "skip", None)]
+    #[case::mismatched(2, "infrastructure", Some(vec![4,2]))]
+    fn active_skip_must_correlate_with_the_admitted_case(
+        #[case] case_id: u64,
+        #[case] kind: &str,
+        #[case] retained: Option<Vec<u8>>,
+    ) {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"next","test_id":"test"}),
+            json!({"kind":"skipped","case_id":case_id,"observation":{"nodeid":"test"}}),
+            json!({"kind":"done"}),
+        ]);
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, kind, "{observation:?}");
+        assert_eq!(result.retained_input, retained);
+        assert_eq!(result.original.is_some(), retained.is_some());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn failure_acknowledgement_does_not_replace_orderly_session_completion() {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"next","test_id":"test"}),
+            json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":"failure","fingerprint":"same"}}),
+        ]);
+        let script = std::fs::read_to_string(&fixture.config.python)
+            .unwrap()
+            .replace("sleep 60\n", "exit 0\n");
+        std::fs::write(&fixture.config.python, script).unwrap();
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.rendered.as_deref(),
+            Some("worker exited before orderly session completion")
+        );
+        let record: Value =
+            serde_json::from_slice(&std::fs::read(result.original.unwrap()).unwrap()).unwrap();
+        assert_eq!(record["input"], json!([4, 2]));
+        assert_eq!(record["observation"]["kind"], "failure");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn worker_stdout_eof_while_alive_retains_active_input_after_grace() {
+        let fixture = SessionFixture::new(&[
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"next","test_id":"test"}),
+        ]);
+        let script = std::fs::read_to_string(&fixture.config.python)
+            .unwrap()
+            .replace("sleep 60\n", "exec 1>&-\nsleep 60\n");
+        std::fs::write(&fixture.config.python, script).unwrap();
+        let result = fixture.run("run", &mut ExecutionReport::default());
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.rendered.as_deref(),
+            Some("worker exited before done")
+        );
+        assert_eq!(result.retained_input, Some(vec![4, 2]));
+        let record: Value =
+            serde_json::from_slice(&std::fs::read(result.original.unwrap()).unwrap()).unwrap();
+        assert_eq!(record["input"], json!([4, 2]));
     }
     proptest! {
         #[test]

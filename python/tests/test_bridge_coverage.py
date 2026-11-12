@@ -7,6 +7,7 @@ from collections.abc import Iterator  # noqa: TC003 -- pytest fixture annotation
 from operator import attrgetter
 from pathlib import Path  # noqa: TC003 -- pytest fixture annotation
 from random import Random
+from unittest.mock import create_autospec, patch
 
 import adapter
 import hypothesis
@@ -171,14 +172,12 @@ def test_ordinary_non_hypothesis_target_is_left_to_pytest(bridge_project: Path) 
     assert outcomes == []
 
 
-def test_measurement_version_drift_is_infrastructure(
-    bridge_project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_measurement_version_drift_is_infrastructure(bridge_project: Path) -> None:
     """Reject incompatible measurement internals before ordinary generation."""
-    monkeypatch.setattr(hypothesis, "__version__", "unsupported")
-    code, _ = run_ordinary(
-        [str(bridge_project), "-q", "-k", "test_pass"], lambda _: None, lambda _: None
-    )
+    with patch.object(hypothesis, "__version__", "unsupported"):
+        code, _ = run_ordinary(
+            [str(bridge_project), "-q", "-k", "test_pass"], lambda _: None, lambda _: None
+        )
     assert code == 1
 
 
@@ -241,12 +240,12 @@ def test_invalid_pytest_option_is_infrastructure(bridge_project: Path) -> None:
         run_session([str(bridge_project), "--kiryl-invalid-option"], [])
 
 
-def test_measurement_rejects_version_before_wrapping(
-    target: BoundTarget, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_measurement_rejects_version_before_wrapping(target: BoundTarget) -> None:
     """Guard the compatibility seam independently of pytest's own version checks."""
-    monkeypatch.setattr(hypothesis, "__version__", "unsupported")
-    with pytest.raises(RuntimeError, match="measurement version"):
+    with (
+        patch.object(hypothesis, "__version__", "unsupported"),
+        pytest.raises(RuntimeError, match="measurement version"),
+    ):
         instrument_ordinary(target.item, lambda: None, lambda _: None)
 
 
@@ -264,27 +263,33 @@ class AdvancingClock:
 
 @pytest.mark.parametrize("ticks", [(0.0, 0.0, 2.0), (0.0, 0.0, 0.0, 2.0)])
 def test_shrink_budget_expires_around_candidate_acknowledgement(
-    bridge_project: Path, monkeypatch: pytest.MonkeyPatch, ticks: tuple[float, ...]
+    bridge_project: Path, ticks: tuple[float, ...]
 ) -> None:
     """Expiry before or after candidate acknowledgement preserves confirmed evidence."""
     node = "test_bridge_edges.py::test_failure"
     evidence = run_session([str(bridge_project), "-q"], [Invocation(node, (b"",))])
     token = evidence.cases[0].replay_token
     assert token is not None
-    monkeypatch.setattr(hypothesis_bridge.time, "monotonic", AdvancingClock(ticks))
-    result = minimize(node, token, 1.0, lambda _: None)
+    clock = create_autospec(
+        hypothesis_bridge.time.monotonic, spec_set=True, side_effect=AdvancingClock(ticks)
+    )
+    with patch.object(hypothesis_bridge.time, "monotonic", clock):
+        result = minimize(node, token, 1.0, lambda _: None)
     assert result.complete is False
     assert result.original == token
     assert result.verification == "confirmed"
 
 
-def test_measurement_rejects_changed_database_digest(
-    target: BoundTarget, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_measurement_rejects_changed_database_digest(target: BoundTarget) -> None:
     """Refuse instrumentation when wrapping changes persistent database identity."""
     digests = iter((b"wrapped", b"original"))
-    monkeypatch.setattr(hypothesis_bridge, "function_digest", lambda _: next(digests))
-    with pytest.raises(RuntimeError, match="database identity"):
+    digest = create_autospec(
+        hypothesis_bridge.function_digest, spec_set=True, side_effect=lambda _: next(digests)
+    )
+    with (
+        patch.object(hypothesis_bridge, "function_digest", digest),
+        pytest.raises(RuntimeError, match="database identity"),
+    ):
         instrument_ordinary(target.item, lambda: None, lambda _: None)
 
 

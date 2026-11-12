@@ -7,10 +7,12 @@ sources:
 - id: plan
   resource: ../work/product-cli/test-coverage-plan.md
   working_tree: modified
-  sha256: 1e146075c9eb012781d7e59bf51cf80e8da50d60c89e7c46cc3aff2a8b28f329
+  sha256: 068641eb3754d111a4c74d2062ea81f5c02ce9064ae7df1d9bf510c737380420
 - id: manifest
   resource: ../../../Cargo.toml
   revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+- id: mock-api
+  resource: https://docs.python.org/ja/3.15/library/unittest.mock.html#unittest.mock.create_autospec
 ---
 # Test contract
 
@@ -20,6 +22,14 @@ or pytest parameters for enumerated inputs, and proptest/Hypothesis when the
 behavior has a useful general invariant. Infrastructure helpers may supervise a
 single scenario; moving unrelated testcase iteration into helpers is not compliance.
 Assertions may verify multiple consequences of that same scenario.[^plan][^manifest]
+
+Do not use pytest monkeypatch fixtures or MonkeyPatch objects. Callable test doubles
+use create_autospec against the real function, class or instance, with spec_set when
+its attributes are available. Scoped patch.object/patch.dict contexts restore names
+and constants. Autospeccing checks supported attributes and call signatures; it does
+not replace behavior assertions. Foreign APIs absent on the host use a narrow
+documented interface, not unrestricted mocks. Runtime measurement interception keeps
+the real measured factory rather than introducing test doubles into execution.[^mock-api]
 
 Python uses Ruff ALL and ty rules at error severity with strict equality/generic
 narrowing and no ignored typing diagnostics. pytest-cov measures statements and
@@ -49,3 +59,5 @@ coverage instrumentation, test locations or generated fixtures change.[^plan]
 
 [^plan]: [Test cases and coverage plan](../work/product-cli/test-coverage-plan.md).
 [^manifest]: [Rust development dependencies](../../../Cargo.toml).
+
+[^mock-api]: [Python create_autospec and scoped patching](https://docs.python.org/ja/3.15/library/unittest.mock.html#unittest.mock.create_autospec).

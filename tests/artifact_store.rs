@@ -665,3 +665,15 @@ fn typed_finding_rejects_malformed_observation_without_repair() {
     assert!(store.load_finding(&original).is_err());
     assert_eq!(fs::read(&original).unwrap(), before);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn replay_rejects_non_utf8_finding_path_and_releases_campaign_lock() {
+    let (root, original, _) = replay_fixture();
+    let path = non_utf8_path(std::path::Path::new(&original).parent().unwrap());
+    fs::write(&path, b"unread malformed record").unwrap();
+    let error = kiryl::artifacts::ReplayContext::open(&path).err().unwrap();
+    assert_eq!(error.to_string(), "non UTF-8 finding path");
+    assert_eq!(fs::read(&path).unwrap(), b"unread malformed record");
+    drop(ArtifactStore::open(&root).unwrap());
+}

@@ -162,3 +162,28 @@ agent; these do not represent five independent reviewers.
    defensive 500 ms termination deadline cannot be forced deterministically
    through a normally functioning owned Windows job; it is not excluded or
    claimed covered by these tests.
+
+Coverage-tool mock conversion underwent five distinct review passes by the
+implementing agent:
+
+1. API review: read Python 3.14's [autospeccing documentation](https://docs.python.org/3.14/library/unittest.mock.html#autospeccing).
+   Callable replacements use `create_autospec` on the real subprocess function
+   or source-snapshot function, with `spec_set=True`. Specifications are
+   captured before their scoped patches begin.
+2. Lifetime review: an `ExitStack` fixture owns `patch.object` contexts and
+   restores constants and functions after each case. Mutable interpreter search
+   paths are replaced with a fresh list and restored afterward. No pytest
+   monkeypatch fixture, `.setattr` replacement API or loose Mock/MagicMock
+   constructor remains in the tool tests.
+3. Orchestration review: subprocess spies retain real API specifications while
+   their side effects use the deterministic report collector. Cargo and pytest
+   are never recursively executed. Existing assertions still verify argument
+   vectors, working directories, instrumentation settings, executable paths and
+   failure propagation.
+4. Structure review: all 63 parameterized cases remain separate invocations.
+   Test bodies contain no conditional/loop/match/comprehension expressions;
+   fixture setup owns the patch stack and existing matrix construction.
+5. Verification review: all 63 targeted tests pass, strict Ruff and ty checks
+   pass, and both tools plus their test file remain at 100 percent statements
+   and branches in `/private/tmp/kiryl-tools-autospec-coverage.json`. No product,
+   Rust, coverage configuration or tool implementation changes were required.

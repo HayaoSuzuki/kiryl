@@ -55,6 +55,7 @@ def source_snapshot(root: Path) -> dict[str, str]:
         "tools/run_coverage.py",
         "tools/report_coverage.py",
         "tools/with-delegated-cgroup.sh",
+        "docs/development/work/product-cli/evidence/hard-resource-run.py",
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",

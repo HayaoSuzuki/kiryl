@@ -117,3 +117,24 @@ remain separate and are not claimed as100%. Independentreview rechecked source
 inventory, snapshot checks, quoting and delegation ownership without finding a
 Critical/Important issue. Cleanup may emit an additional diagnostic if setup fails
 before the controller exists; this is fail-closed and is not a coverage exclusion.
+
+## Autospec refinement and third native collection
+
+All Python monkeypatch fixtures/objects and unrestricted Mock/MagicMock constructors
+have been removed from product and experiment code. Callable doubles use
+create_autospec with real signatures or documented foreign-platform interfaces;
+scoped patch contexts restore replacement names. Production measurement retains
+the real measured factory through ExitStack. Five review passes per phase in the
+three testcase review records cover interface fidelity, restoration, one-case
+granularity, assertions and strict checks.
+
+The fresh local collection after this refinement passes303Rusttests and259Python
+cases with6native skips. RawLLVM totals are3267/3334lines(97.99040191961608%) and
+322/325functions; Python has2787/2867statements and374/374branches. The80missing
+Python statements belong to native CLI/hard-resource tests. This is not a100%
+acceptance claim. Native2 atda7d403 passed Linux3.15 and WindowsRust, exposing
+collection-fixture startup/stderr ordering and cross-platform Python fixture issues.
+The fixtures now obey startup attachment and write diagnostics before output flood;
+bootstrap owns a typed resource-module double and source failure uses an absolute
+missing path. Native coverage now runs one hard-resource scenario per parameter
+to exercise actual Linux/Windows containment inside instrumentation.

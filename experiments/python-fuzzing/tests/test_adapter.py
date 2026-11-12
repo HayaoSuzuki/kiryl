@@ -2,6 +2,7 @@
 """Real pytest invocations: binding, scope resets, selection and classification."""
 
 from pathlib import Path  # noqa: TC003 -- Hypothesis introspects test annotations
+from unittest.mock import patch
 
 import hypothesis
 import pytest
@@ -118,13 +119,12 @@ def test_parameter_invocation_sequences_do_not_leak_fixture_state(
 
 def test_unsupported_hypothesis_version_is_infrastructure(
     scopes: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reject version drift before it can become a misleading target finding."""
-    monkeypatch.setattr(hypothesis, "__version__", "unsupported")
-    evidence = run_session(
-        [str(scopes), "-q"], [Invocation("test_scopes.py::test_expected", (b"",))]
-    )
+    with patch.object(hypothesis, "__version__", "unsupported"):
+        evidence = run_session(
+            [str(scopes), "-q"], [Invocation("test_scopes.py::test_expected", (b"",))]
+        )
     assert [case.kind for case in evidence.cases] == ["infrastructure"]
     assert evidence.cases[0].rendered is not None
     assert "unsupported Hypothesis" in evidence.cases[0].rendered

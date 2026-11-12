@@ -70,3 +70,6 @@ skip_empty = true
 [tool.coverage.paths]
 adapter = ["kiryl_adapter", "*/python/kiryl_adapter", '*\\python\\kiryl_adapter']
 tests = ["tests", "*/python/tests", '*\\python\\tests']
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"pytest.MonkeyPatch" = { msg = "Use scoped unittest.mock.patch and create_autospec for callable doubles." }

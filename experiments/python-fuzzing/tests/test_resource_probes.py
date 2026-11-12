@@ -9,6 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
 
 import pytest
 from test_controller import BINARY
@@ -109,15 +110,14 @@ def test_fallback_is_explicit_about_containment(
 def test_startup_ignores_unattached_pythonpath_hooks(
     probe_run: Callable[..., tuple[int, Report]],
     process_project: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Trusted isolated bootstrap cannot run PYTHONPATH startup code before attachment."""
     hook = process_project / "early-startup.txt"
     (process_project / "sitecustomize.py").write_text(
         f"from pathlib import Path\nPath({str(hook)!r}).write_text('too early')\n"
     )
-    monkeypatch.setenv("PYTHONPATH", str(process_project))
-    code, _ = probe_run(("marker",))
+    with patch.dict(os.environ, {"PYTHONPATH": str(process_project)}):
+        code, _ = probe_run(("marker",))
     assert code == 0
     assert not hook.exists()
     assert (process_project / "target-started.txt").exists()

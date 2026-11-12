@@ -106,3 +106,100 @@ after execution; this detects commits but cannot detect changed dirty working
 tree bytes at the same HEAD. A clean CI checkout mitigates the latter; local
 reports must retain their working-tree qualification. Neither finding required
 production behavior changes in this review.
+
+## Autospec revision: worker, bootstrap and runtime tests
+
+This revision follows the maintainer's replacement of pytest monkeypatch with
+standard-library patch contexts and `create_autospec`. The
+[official create_autospec documentation](https://docs.python.org/ja/3/library/unittest.mock.html#unittest.mock.create_autospec)
+was read before editing: callable specs constrain available APIs and supported
+signatures, while `spec_set=True` rejects attributes absent from the spec.
+
+Design reviews:
+
+1. Keep real file descriptors and frame serialization in Driver tests; replace
+   only the boundaries requiring deterministic faults.
+2. Specify the Driver double from a real initialized Driver instance so its
+   dynamically initialized `input` and `case_id` attributes remain bounded.
+3. Use native loader originals as callable specs; represent absent foreign APIs
+   with named protocols documenting their arguments and ctypes descriptors.
+4. Treat interpreter versions, platform strings and module dictionaries as
+   values replaced through scoped patches rather than callable mocks.
+5. Keep the isolated resource module: bootstrap tests must neither require Unix
+   modules on Windows nor change the runner's actual core-dump limits.
+
+Plan reviews:
+
+1. Capture real callables before installing their replacements.
+2. Restore module, descriptor and callable patches through `ExitStack` fixture
+   teardown, including exceptional exits.
+3. Replace handwritten replay/shrink callables with autospecced originals whose
+   side effects retain the authored acknowledgment behavior.
+4. Split GIL capability admission from the table of noncallable interpreter
+   values, preserving one scenario per invocation.
+5. Measure modified test sources as well as worker/runtime code; directly check
+   the resource-spec fallback rather than leaving a host-dependent hole.
+
+Implementation reviews:
+
+1. The three owned files contain no pytest monkeypatch fixture or operations.
+2. No unrestricted `Mock()` or `MagicMock()` constructors remain; `Mock` is used
+   only for type annotations around an autospecced real Driver instance.
+3. Callable replacements use `create_autospec(..., spec_set=True)`; every
+   `patch.object` supplies an explicit replacement rather than creating a default
+   unrestricted mock.
+4. Native protocol declarations cover `prctl`, `SetErrorMode`, CRT abort behavior
+   and resource-limit setup. Opaque foreign calls remain bounded by those
+   documented APIs instead of an arbitrary attribute tree.
+5. Original argument and frame assertions remain. The prctl call uses exact
+   `call_args` equality plus a single-call assertion, preserving the five-argument
+   check alongside autospec's invocation signature validation.
+
+Test reviews:
+
+1. All 34 targeted cases pass with randomized seed 17.
+2. Worker and runtime product modules measure exactly 100% statements and
+   branches in the targeted run.
+3. All three modified test files likewise measure exactly 100%; temporary JSON
+   evidence is `/private/tmp/kiryl-autospec-worker-final.json`.
+4. Ruff and formatting pass for the owned files; strict ty passes all six Linux,
+   macOS and Windows × Python 3.14 and 3.15 analysis combinations.
+5. AST inspection finds no branches, loops, conditional expressions or
+   comprehensions in the owned test functions. Full-suite/native aggregation
+   remains the parent task's gate after the other test files finish conversion.
+
+
+## Stateful runtime interception review
+
+The remaining production and experimental `instrument_ordinary` implementations
+used pytest's patch manager to install the real `measured_factory`. They now use
+`ExitStack` with standard-library `patch.object(..., new=measured_factory)` and
+return `ExitStack.close` as the restoration callback. This changes the scoped
+replacement mechanism, with no intended change to generation, shrinking,
+database identity or restoration on exceptions.
+
+The replacement remains a real function: it calls the captured original
+Hypothesis factory, instruments the returned real handle, and returns its real
+wrapped property. An autospecced mock would turn runtime instrumentation into a
+test double and could alter execution or Hypothesis database identity. Autospec
+belongs at the tests' fault-injection boundaries, not in this production wrapper.
+The patch import is local to stateful measurement to avoid importing mocking
+infrastructure during ordinary product startup.
+
+The experiment's version mutation and PYTHONPATH setup now use scoped value
+patches; its Linux bootstrap faults use the same bounded native API autospec
+pattern as the product tests. Separate experiment lockfiles, dependency versions
+and tooling configuration were left unchanged.
+
+Validation: 45 product replay/bridge cases passed, including ordinary and
+stateful database reuse. Eighteen affected experimental/bootstrap/replay cases
+passed in the experimental virtual environment. Experimental Ruff, formatting
+and all six native-platform/Python-version type analyses passed; the changed
+product bridge passes Ruff and formatting. A repository-wide Python search found
+no remaining pytest MonkeyPatch or monkeypatch operations. The parent task owns
+full-suite/native verification after concurrent test edits finish.
+
+Source snapshots read for this review (`working_tree: modified`):
+
+- Product bridge SHA-256: `220afdb79a150c404ef81beda0099820b16a5f2628b426b0e7d5c9d85bb90a4e`.
+- Experimental bridge SHA-256: `8fb21823f685db6435d669fcd9d88670750b479bb9e99123f3c0c85a01b555b7`.

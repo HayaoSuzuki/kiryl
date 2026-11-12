@@ -165,3 +165,30 @@ lines; remaining uncovered lines are in production supervision and platform/erro
 paths, and are not claimed covered by this focused run. The parent task owns
 the native aggregate and final coverage threshold. No production executor code
 was changed by this follow-up.
+
+## Follow-up: autospecced mocks
+
+The Python adapter, bridge, monitor and CLI-helper tests now use scoped
+`unittest.mock.patch.object` contexts. Callable substitutes are created with
+`create_autospec` and `spec_set=True` before replacing their originals; constant
+Hypothesis versions and platform identifiers are patched as values. This replaces
+the earlier pytest monkeypatch usage described above. There are no unbounded
+`Mock()` or `MagicMock()` constructions in these four files.
+
+Five review checks covered restoration at context exit, callable signatures,
+object attribute bounds, one scenario per test, and unchanged coverage. Popen
+and Path substitutes use the real standard-library classes, and require only
+class-defined methods. Windows-only kernel and ctypes error APIs use narrow
+Protocols documenting the relevant Microsoft/CPython signatures, so Unix tests
+cannot silently invent unrelated attributes. No arbitrary attribute list or
+production mocking interface was added. The existing absolute missing-source
+monitor callback specimen remains unchanged.
+
+The behavior follows Python's documented [autospeccing and scoped patching
+contracts](https://docs.python.org/3/library/unittest.mock.html#create-autospec).
+The foreign-interface declarations reference [Microsoft handle cleanup](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle)
+and [ctypes error handling](https://docs.python.org/3/library/ctypes.html#ctypes.get_last_error).
+Ruff's complete configured rules and strict ty with `--python-platform all` pass
+for these four files. The targeted suite passes 99 cases, and each maintained
+file retains 100% statement and branch coverage in its measured run. Production
+source and behavior are unchanged, so no OKF contract update is needed.

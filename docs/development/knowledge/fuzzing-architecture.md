@@ -19,7 +19,7 @@ sources:
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: 1a1b31f5afc22dba90268f789746f17f5818d6e2f912cb8b0e0ac344837bd85c
+  sha256: 299c4a881090addb53dd244742f3d4e66064df41275a7b981d225565d561d37f
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified

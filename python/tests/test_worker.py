@@ -7,11 +7,11 @@ import site
 import subprocess
 import sys
 from collections.abc import Callable, Iterator  # noqa: TC003 -- pytest introspects annotations
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from pathlib import Path  # noqa: TC003 -- pytest introspects annotations
-from types import SimpleNamespace
-from typing import BinaryIO
-from unittest.mock import Mock
+from types import ModuleType, SimpleNamespace
+from typing import BinaryIO, Protocol, cast
+from unittest.mock import Mock, create_autospec, patch
 
 import adapter
 import pytest
@@ -22,14 +22,58 @@ from wire import receive, send
 from worker import Driver, _bootstrap, _dispatch
 
 
+class ErrorModeAPI(Protocol):
+    """Declare kernel32.SetErrorMode's documented one-argument signature."""
+
+    def __call__(self, mode: int) -> int:
+        """Set the process error mode using the Windows ABI contract."""
+        ...
+
+
+class AbortBehaviorAPI(Protocol):
+    """Declare the CRT abort behavior function and mutable ctypes descriptors."""
+
+    argtypes: object = None
+    restype: object = None
+
+    def __call__(self, flags: int, mask: int) -> int:
+        """Set selected CRT abort flags."""
+        ...
+
+
+class ResourceLimitAPI(Protocol):
+    """Declare resource.setrlimit on hosts without the resource module."""
+
+    @staticmethod
+    def setrlimit(resource: int, limits: tuple[int, int]) -> None:
+        """Set the soft and hard limits for one native resource."""
+        ...
+
+
+def resource_limit_api() -> Callable[..., object]:
+    """Select the real native API when available, otherwise its documented signature."""
+    try:
+        import resource  # noqa: PLC0415 -- unavailable on Windows
+    except ImportError:
+        return ResourceLimitAPI.setrlimit
+    return cast("Callable[..., object]", getattr(resource, "setrlimit", ResourceLimitAPI.setrlimit))
+
+
+@pytest.fixture
+def patches() -> Iterator[ExitStack]:
+    """Restore every standard-library patch when its test scenario ends."""
+    with ExitStack() as stack:
+        yield stack
+
+
 @pytest.fixture
 def driver_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, patches: ExitStack
 ) -> Iterator[tuple[Driver, BinaryIO, io.BytesIO]]:
     """Reserve a real descriptor while keeping protocol traffic in inspectable streams."""
     incoming = (tmp_path / "control.bin").open("w+b")
     text = io.TextIOWrapper(incoming)
-    monkeypatch.setattr(sys, "stdin", text)
+    patches.enter_context(patch.object(sys, "stdin", text))
     output = io.BytesIO()
     driver = Driver(output)
     try:
@@ -141,24 +185,33 @@ def test_driver_rejects_missing_finding_ack(
 
 
 @pytest.fixture
-def dispatch_transport(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, io.BytesIO]:
+def dispatch_transport(
+    patches: ExitStack, driver_transport: tuple[Driver, BinaryIO, io.BytesIO]
+) -> tuple[Mock, io.BytesIO]:
     """Replace descriptor acquisition while retaining real frame serialization."""
-    driver = Mock()
+    original_driver, _, _ = driver_transport
+    driver = cast("Mock", create_autospec(original_driver, spec_set=True))
     driver.input = io.BytesIO()
     send(driver.input, {"kind": "ack"})
     driver.input.seek(0)
-    monkeypatch.setattr(worker, "Driver", Mock(return_value=driver))
+    patches.enter_context(
+        patch.object(worker, "Driver", create_autospec(Driver, spec_set=True, return_value=driver))
+    )
     return driver, io.BytesIO()
 
 
 @pytest.mark.parametrize("kind", ["pass", "infrastructure"])
 def test_dispatch_run_reports_infrastructure(
-    dispatch_transport: tuple[Mock, io.BytesIO], monkeypatch: pytest.MonkeyPatch, kind: str
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack, kind: str
 ) -> None:
     """Each completed run sends done, and infrastructure receives its own error frame."""
     _, output = dispatch_transport
-    run = Mock(return_value=SessionEvidence(cases=[CaseResult("target", kind)]))
-    monkeypatch.setattr(adapter, "run_session", run)
+    run = create_autospec(
+        adapter.run_session,
+        spec_set=True,
+        return_value=SessionEvidence(cases=[CaseResult("target", kind)]),
+    )
+    patches.enter_context(patch.object(adapter, "run_session", run))
     _dispatch(output, {"test_id": "target", "pytest_args": []})
     output.seek(0)
     expected = {"pass": "done", "infrastructure": "error"}
@@ -167,12 +220,12 @@ def test_dispatch_run_reports_infrastructure(
 
 
 def test_dispatch_baseline_publishes_statistics(
-    dispatch_transport: tuple[Mock, io.BytesIO], monkeypatch: pytest.MonkeyPatch
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack
 ) -> None:
     """Ordinary Hypothesis execution returns its exit and measured statistics."""
     driver, output = dispatch_transport
-    run = Mock(return_value=(1, {"useful": 3}))
-    monkeypatch.setattr(adapter, "run_ordinary", run)
+    run = create_autospec(adapter.run_ordinary, spec_set=True, return_value=(1, {"useful": 3}))
+    patches.enter_context(patch.object(adapter, "run_ordinary", run))
     _dispatch(output, {"mode": "baseline", "test_id": "target", "pytest_args": []})
     output.seek(0)
     assert receive(output) == {
@@ -208,13 +261,19 @@ def shrink_case(
 
 @pytest.mark.parametrize("reply", ["ack", "bad"])
 def test_dispatch_replay_requires_case_ack(
-    dispatch_transport: tuple[Mock, io.BytesIO], monkeypatch: pytest.MonkeyPatch, reply: str
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack, reply: str
 ) -> None:
     """A replay candidate stays owned by the parent before its oracle runs."""
     driver, output = dispatch_transport
     driver.input = io.BytesIO()
     queue(driver.input, {"kind": reply})
-    monkeypatch.setattr(adapter, "run_token", replay_case)
+    patches.enter_context(
+        patch.object(
+            adapter,
+            "run_token",
+            create_autospec(adapter.run_token, spec_set=True, side_effect=replay_case),
+        )
+    )
     outcomes = {"ack": nullcontext(), "bad": pytest.raises(ValueError, match="replay-case")}
     with outcomes[reply]:
         _dispatch(output, {"mode": "replay", "test_id": "target", "pytest_args": [], "token": [1]})
@@ -224,13 +283,19 @@ def test_dispatch_replay_requires_case_ack(
 
 @pytest.mark.parametrize("reply", ["ack", "bad"])
 def test_dispatch_minimize_requires_candidate_ack(
-    dispatch_transport: tuple[Mock, io.BytesIO], monkeypatch: pytest.MonkeyPatch, reply: str
+    dispatch_transport: tuple[Mock, io.BytesIO], patches: ExitStack, reply: str
 ) -> None:
     """Shrinking cannot evaluate a candidate before the controller sees its bytes."""
     driver, output = dispatch_transport
     driver.input = io.BytesIO()
     queue(driver.input, {"kind": reply})
-    monkeypatch.setattr(adapter, "minimize", shrink_case)
+    patches.enter_context(
+        patch.object(
+            adapter,
+            "minimize",
+            create_autospec(adapter.minimize, spec_set=True, side_effect=shrink_case),
+        )
+    )
     outcomes = {"ack": nullcontext(), "bad": pytest.raises(ValueError, match="shrink candidate")}
     with outcomes[reply]:
         _dispatch(
@@ -254,23 +319,51 @@ def test_dispatch_rejects_unknown_mode(dispatch_transport: tuple[Mock, io.BytesI
         _dispatch(output, {"mode": "unknown", "test_id": "target", "pytest_args": []})
 
 
-def test_main_reports_runtime_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_reports_runtime_rejection(patches: ExitStack) -> None:
     """An admitted control stream receives runtime errors before adapter dispatch."""
     output = io.BytesIO()
-    monkeypatch.setattr(worker, "_bootstrap", Mock(return_value=(output, {})))
-    monkeypatch.setattr(runtime, "validate_runtime", Mock(side_effect=RuntimeError("unsupported")))
+    patches.enter_context(
+        patch.object(
+            worker,
+            "_bootstrap",
+            create_autospec(_bootstrap, spec_set=True, return_value=(output, {})),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            runtime,
+            "validate_runtime",
+            create_autospec(
+                runtime.validate_runtime, spec_set=True, side_effect=RuntimeError("unsupported")
+            ),
+        )
+    )
     worker.main()
     output.seek(0)
     assert receive(output) == {"version": 1, "kind": "error", "message": "unsupported"}
 
 
 def test_main_reports_skip_from_dispatch(
-    monkeypatch: pytest.MonkeyPatch, dispatch_transport: tuple[Mock, io.BytesIO]
+    patches: ExitStack, dispatch_transport: tuple[Mock, io.BytesIO]
 ) -> None:
     """A pytest skip escaping dispatch is an explicit skip followed by done."""
     driver, output = dispatch_transport
-    monkeypatch.setattr(worker, "_bootstrap", Mock(return_value=(output, {"test_id": "target"})))
-    monkeypatch.setattr(worker, "_dispatch", Mock(side_effect=pytest.skip.Exception("skip")))
+    patches.enter_context(
+        patch.object(
+            worker,
+            "_bootstrap",
+            create_autospec(
+                _bootstrap, spec_set=True, return_value=(output, {"test_id": "target"})
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            worker,
+            "_dispatch",
+            create_autospec(_dispatch, spec_set=True, side_effect=pytest.skip.Exception("skip")),
+        )
+    )
     worker.main()
     driver.observe.assert_called_once_with(CaseResult("target", "skip"))
     output.seek(0)
@@ -278,31 +371,103 @@ def test_main_reports_skip_from_dispatch(
 
 
 @pytest.fixture
-def bootstrap_streams(monkeypatch: pytest.MonkeyPatch) -> tuple[io.BytesIO, io.BytesIO]:
+def bootstrap_streams(patches: ExitStack) -> tuple[io.BytesIO, io.BytesIO]:
     """Substitute owned descriptors so bootstrap cannot redirect the test runner."""
     incoming = io.BytesIO()
     output = io.BytesIO()
-    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=incoming))
-    monkeypatch.setattr(sys, "stdout", SimpleNamespace(fileno=lambda: 1))
-    monkeypatch.setattr(sys, "stderr", SimpleNamespace(fileno=lambda: 2))
-    monkeypatch.setattr(worker.os, "dup", Mock(return_value=97))
-    monkeypatch.setattr(worker.os, "dup2", Mock())
-    monkeypatch.setattr(worker.os, "fdopen", Mock(return_value=output))
-    monkeypatch.setattr(site, "main", Mock())
-    monkeypatch.setattr(worker, "disable_linux_core_dumps", Mock())
+    patches.enter_context(patch.object(sys, "stdin", SimpleNamespace(buffer=incoming)))
+    patches.enter_context(
+        patch.object(
+            sys,
+            "stdout",
+            SimpleNamespace(
+                fileno=create_autospec(sys.stdout.fileno, spec_set=True, return_value=1)
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            sys,
+            "stderr",
+            SimpleNamespace(
+                fileno=create_autospec(sys.stderr.fileno, spec_set=True, return_value=2)
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            worker.os, "dup", create_autospec(worker.os.dup, spec_set=True, return_value=97)
+        )
+    )
+    patches.enter_context(
+        patch.object(worker.os, "dup2", create_autospec(worker.os.dup2, spec_set=True))
+    )
+    patches.enter_context(
+        patch.object(
+            worker.os,
+            "fdopen",
+            create_autospec(worker.os.fdopen, spec_set=True, return_value=output),
+        )
+    )
+    resource_probe = ModuleType("resource")
+    patches.enter_context(
+        patch.object(
+            resource_probe,
+            "setrlimit",
+            create_autospec(resource_limit_api(), spec_set=True),
+            create=True,
+        )
+    )
+    patches.enter_context(patch.object(resource_probe, "RLIMIT_CORE", 4, create=True))
+    patches.enter_context(patch.dict(sys.modules, {"resource": resource_probe}))
+    patches.enter_context(patch.object(site, "main", create_autospec(site.main, spec_set=True)))
+    patches.enter_context(
+        patch.object(
+            worker,
+            "disable_linux_core_dumps",
+            create_autospec(worker.disable_linux_core_dumps, spec_set=True),
+        )
+    )
     return incoming, output
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
 def test_bootstrap_reserves_streams_before_platform_setup(
-    bootstrap_streams: tuple[io.BytesIO, io.BytesIO], monkeypatch: pytest.MonkeyPatch, platform: str
+    bootstrap_streams: tuple[io.BytesIO, io.BytesIO], patches: ExitStack, platform: str
 ) -> None:
     """Native setup follows the controller's start acknowledgment on every platform."""
     incoming, output = bootstrap_streams
     queue(incoming, {"kind": "start"})
-    monkeypatch.setattr(sys, "platform", platform)
-    monkeypatch.setattr(ctypes, "WinDLL", Mock(), raising=False)
-    monkeypatch.setattr(ctypes, "CDLL", Mock())
+    patches.enter_context(patch.object(sys, "platform", platform))
+    patches.enter_context(
+        patch.object(
+            ctypes,
+            "WinDLL",
+            create_autospec(
+                getattr(ctypes, "WinDLL", ctypes.CDLL),
+                spec_set=True,
+                return_value=SimpleNamespace(
+                    SetErrorMode=create_autospec(ErrorModeAPI, instance=True, spec_set=True)
+                ),
+            ),
+            create=True,
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            ctypes,
+            "CDLL",
+            create_autospec(
+                ctypes.CDLL,
+                spec_set=True,
+                return_value=SimpleNamespace(
+                    _set_abort_behavior=create_autospec(
+                        AbortBehaviorAPI, instance=True, spec_set=True
+                    )
+                ),
+            ),
+        )
+    )
     control, request = _bootstrap()
     assert control is output
     assert request == {"version": 1, "kind": "start"}
@@ -334,3 +499,9 @@ def test_script_entry_point_rejects_unacknowledged_session() -> None:
     assert result.returncode == 1
     assert receive(io.BytesIO(result.stdout))["kind"] == "ready"
     assert b"session was not acknowledged" in result.stderr
+
+
+def test_resource_limit_spec_exists_without_native_module() -> None:
+    """The documented signature permits bootstrap tests on hosts without resource."""
+    with patch.dict(sys.modules, {"resource": None}):
+        assert resource_limit_api() is ResourceLimitAPI.setrlimit

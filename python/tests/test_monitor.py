@@ -12,6 +12,7 @@ from operator import attrgetter, methodcaller
 from pathlib import Path
 from types import CodeType, FunctionType, ModuleType
 from typing import cast
+from unittest.mock import create_autospec, patch
 
 import pytest
 from adapter import Invocation, replay, run_session
@@ -195,6 +196,7 @@ def test_feature_ids_match_an_independent_interpreter(branches: ModuleType, tmp_
         monitor.close()
     script = """
 import importlib.util, json, sys
+from unittest.mock import create_autospec, patch
 from pathlib import Path
 from monitor import BranchMonitor
 root = Path(sys.argv[1])
@@ -241,6 +243,7 @@ def test_invalid_code_filename_does_not_inject_a_target_exception(tmp_path: Path
     # this owned-code boundary probe instead of disabling another client's hooks.
     script = r"""
 import importlib.util, sys
+from unittest.mock import create_autospec, patch
 from pathlib import Path
 from monitor import BranchMonitor
 root = Path(sys.argv[1])
@@ -441,12 +444,14 @@ def test_registered_callback_ignores_inactive_case(
 
 
 def test_registered_callback_defers_source_failure(
-    manual_monitor: tuple[BranchMonitor, Callable[[CodeType, int, int], None]], branches: ModuleType
+    manual_monitor: tuple[BranchMonitor, Callable[[CodeType, int, int], None]],
+    branches: ModuleType,
+    tmp_path: Path,
 ) -> None:
     """Callback failures become coverage infrastructure only when the case finishes."""
     monitor, callback = manual_monitor
     monitor.start_case()
-    callback(branches.classify.__code__.replace(co_filename="invalid\x00.py"), 0, 1)
+    callback(branches.classify.__code__.replace(co_filename=str(tmp_path / "missing.py")), 0, 1)
     with pytest.raises(RuntimeError, match="monitoring source"):
         monitor.finish_case()
 
@@ -474,17 +479,16 @@ def test_monitor_refuses_finishing_without_active_case(tmp_path: Path) -> None:
         monitor.close()
 
 
-def test_monitor_releases_slot_when_callback_registration_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_monitor_releases_slot_when_callback_registration_fails(tmp_path: Path) -> None:
     """Initialization failure restores monitoring ownership for the next client."""
-    from unittest.mock import Mock  # noqa: PLC0415 -- injected monitoring failure
-
     before = tuple(map(sys.monitoring.get_tool, range(6)))
-    monkeypatch.setattr(
-        sys.monitoring, "register_callback", Mock(side_effect=RuntimeError("probe"))
+    registration = create_autospec(
+        sys.monitoring.register_callback, spec_set=True, side_effect=RuntimeError("probe")
     )
-    with pytest.raises(RuntimeError, match="probe"):
+    with (
+        patch.object(sys.monitoring, "register_callback", registration),
+        pytest.raises(RuntimeError, match="probe"),
+    ):
         BranchMonitor((tmp_path,))
     assert tuple(map(sys.monitoring.get_tool, range(6))) == before
 

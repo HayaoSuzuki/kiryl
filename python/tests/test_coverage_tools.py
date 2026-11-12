@@ -8,16 +8,16 @@ import json
 import runpy
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import create_autospec, patch
 
 import pytest
 from tools import report_coverage, run_coverage
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
 SHA = "a" * 40
 NATIVE_CELLS = 6
 PARSER_ERROR = 2
@@ -38,7 +38,14 @@ PYTHON = {
 
 
 @pytest.fixture
-def matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def patches() -> Iterator[ExitStack]:
+    """Restore scoped unittest patches after each independent test case."""
+    with ExitStack() as stack:
+        yield stack
+
+
+@pytest.fixture
+def matrix(tmp_path: Path, patches: ExitStack) -> Path:
     """Build one complete six-cell report matrix."""
     checkout = tmp_path / "checkout"
     (checkout / "src").mkdir(parents=True)
@@ -51,7 +58,7 @@ def matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (checkout / "python/tests/test_case.py").write_text("pass\n", encoding="utf-8")
     (checkout / "tools/run_coverage.py").write_text("pass\n", encoding="utf-8")
     (checkout / "tools/report_coverage.py").write_text("pass\n", encoding="utf-8")
-    monkeypatch.setattr(report_coverage, "ROOT", checkout)
+    patches.enter_context(patch.object(report_coverage, "ROOT", checkout))
     python_report = json.loads(json.dumps(PYTHON))
     python_report["files"]["/repo/tools/run_coverage.py"] = PYTHON["files"]["tests/test_case.py"]
     python_report["files"]["/repo/tools/report_coverage.py"] = PYTHON["files"]["tests/test_case.py"]
@@ -79,7 +86,7 @@ def matrix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ("path", "expected"),
     [
         ("/runner/repo/src/main.rs", "src/main.rs"),
-        (r"C:\runner\repo\tests\report.rs", "tests/report.rs"),
+        ("C:\\runner\\repo\\tests\\report.rs", "tests/report.rs"),
         ("/repo/python/tests/test_wire.py", "python/tests/test_wire.py"),
         ("python/kiryl_adapter/wire.py", "python/kiryl_adapter/wire.py"),
         ("kiryl_adapter/wire.py", "kiryl_adapter/wire.py"),
@@ -100,17 +107,14 @@ def test_unknown_source_path_is_rejected() -> None:
 
 @pytest.mark.parametrize(
     "records",
-    [
-        "FN:1,hit\nFN:1,miss\nFNDA:1,hit\nFNDA:0,miss\n",
-        "FNDA:1,hit\nFN:1,hit\nFN:1,miss\n",
-    ],
+    ["FN:1,hit\nFN:1,miss\nFNDA:1,hit\nFNDA:0,miss\n", "FNDA:1,hit\nFN:1,hit\nFN:1,miss\n"],
 )
 def test_distinct_functions_on_one_line_keep_zero_hits(tmp_path: Path, records: str) -> None:
     """A neighboring hit must not hide a zero-hit function."""
     report = tmp_path / "rust.lcov"
     report.write_text("SF:src/main.rs\n" + records + "DA:1,1\nend_of_record\n", encoding="utf-8")
     assert report_coverage.missing(report_coverage.rust_counts([report])) == {
-        "src/main.rs": {"lines": [], "functions": ["1:miss"]},
+        "src/main.rs": {"lines": [], "functions": ["1:miss"]}
     }
 
 
@@ -146,14 +150,14 @@ def test_python_missing_locations_remain_visible(tmp_path: Path) -> None:
                         "executed_lines": [1],
                         "missing_branches": [[1, 3]],
                         "executed_branches": [[1, 2]],
-                    },
+                    }
                 },
             }
         ),
         encoding="utf-8",
     )
     assert report_coverage.missing(report_coverage.python_counts([report])) == {
-        "python/tests/test_case.py": {"lines": ["2"], "branches": ["[1, 3]"]},
+        "python/tests/test_case.py": {"lines": ["2"], "branches": ["[1, 3]"]}
     }
 
 
@@ -236,32 +240,30 @@ def test_empty_metrics_are_rejected(
 
 
 def test_aggregate_cli_succeeds(
-    matrix: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    matrix: Path, patches: ExitStack, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The gate accepts complete evidence with no missed locations."""
-    monkeypatch.setattr(sys, "argv", ["report_coverage", str(matrix)])
+    patches.enter_context(patch.object(sys, "argv", ["report_coverage", str(matrix)]))
     report_coverage.main()
     assert "exactly 100%" in capsys.readouterr().out
 
 
 def test_aggregate_cli_reports_missed_location(
-    matrix: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    matrix: Path, patches: ExitStack, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A zero-hit source location fails the aggregate gate."""
     (matrix / "linux-3.14/rust.lcov").write_text(
         LCOV + "SF:src/only.rs\nDA:3,0\nend_of_record\n", encoding="utf-8"
     )
-    monkeypatch.setattr(sys, "argv", ["report_coverage", str(matrix)])
+    patches.enter_context(patch.object(sys, "argv", ["report_coverage", str(matrix)]))
     with pytest.raises(SystemExit, match="Coverage must be exactly 100%"):
         report_coverage.main()
     assert "src/only.rs" in capsys.readouterr().out
 
 
-def test_aggregate_cli_metadata_error_uses_parser(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_aggregate_cli_metadata_error_uses_parser(tmp_path: Path, patches: ExitStack) -> None:
     """Malformed evidence exits with argparse's input error status."""
-    monkeypatch.setattr(sys, "argv", ["report_coverage", str(tmp_path)])
+    patches.enter_context(patch.object(sys, "argv", ["report_coverage", str(tmp_path)]))
     with pytest.raises(SystemExit) as error:
         report_coverage.main()
     assert error.value.code == PARSER_ERROR
@@ -323,7 +325,7 @@ class Collector:
 
 @pytest.mark.parametrize("platform", ["linux", "win32"])
 def test_collector_orchestrates_instrumented_commands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+    tmp_path: Path, patches: ExitStack, platform: str
 ) -> None:
     """The actual CLI tests use the instrumented binary and chosen venv path."""
     output = tmp_path / "coverage"
@@ -331,12 +333,28 @@ def test_collector_orchestrates_instrumented_commands(
     collector = Collector(
         output, [SHA, "", 'export LLVM_PROFILE_FILE="/coverage/profile %p"', SHA, "3.14"]
     )
-    monkeypatch.setattr(sys, "platform", platform)
-    monkeypatch.setattr(
-        sys, "argv", ["run_coverage", "--python", str(python), "--output", str(output)]
+    patches.enter_context(patch.object(sys, "platform", platform))
+    patches.enter_context(
+        patch.object(
+            sys, "argv", ["run_coverage", "--python", str(python), "--output", str(output)]
+        )
     )
-    monkeypatch.setattr(subprocess, "check_output", collector.check_output)
-    monkeypatch.setattr(subprocess, "run", collector.run)
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "check_output",
+            create_autospec(
+                subprocess.check_output, spec_set=True, side_effect=collector.check_output
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "run",
+            create_autospec(subprocess.run, spec_set=True, side_effect=collector.run),
+        )
+    )
     run_coverage.main()
     command, cwd, environment = collector.calls[3]
     assert command[:3] == [str(python.absolute()), "-m", "pytest"]
@@ -357,13 +375,27 @@ def test_collector_orchestrates_instrumented_commands(
     assert (output / "revision.txt").read_text(encoding="utf-8").strip() == SHA
 
 
-def test_collector_rejects_revision_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collector_rejects_revision_change(tmp_path: Path, patches: ExitStack) -> None:
     """A checkout change cannot receive successful revision metadata."""
     output = tmp_path / "coverage"
     collector = Collector(output, [SHA, "", "export RUSTFLAGS=x", "b" * 40])
-    monkeypatch.setattr(sys, "argv", ["run_coverage", "--output", str(output)])
-    monkeypatch.setattr(subprocess, "check_output", collector.check_output)
-    monkeypatch.setattr(subprocess, "run", collector.run)
+    patches.enter_context(patch.object(sys, "argv", ["run_coverage", "--output", str(output)]))
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "check_output",
+            create_autospec(
+                subprocess.check_output, spec_set=True, side_effect=collector.check_output
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "run",
+            create_autospec(subprocess.run, spec_set=True, side_effect=collector.run),
+        )
+    )
     with pytest.raises(SystemExit, match="revision changed"):
         run_coverage.main()
     assert not (output / "revision.txt").exists()
@@ -371,10 +403,18 @@ def test_collector_rejects_revision_change(tmp_path: Path, monkeypatch: pytest.M
     assert (output / "unrelated.txt").read_text(encoding="utf-8") == "preserve"
 
 
-def test_collector_command_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_collector_command_failure_propagates(patches: ExitStack) -> None:
     """A failing instrumented command must stop the collection pipeline."""
-    monkeypatch.setattr(
-        subprocess, "run", MagicMock(side_effect=subprocess.CalledProcessError(7, ["cargo"]))
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "run",
+            create_autospec(
+                subprocess.run,
+                spec_set=True,
+                side_effect=subprocess.CalledProcessError(7, ["cargo"]),
+            ),
+        )
     )
     with pytest.raises(subprocess.CalledProcessError) as error:
         run_coverage.execute(["cargo"], environment={})
@@ -382,10 +422,10 @@ def test_collector_command_failure_propagates(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.parametrize("script", ["report_coverage.py", "run_coverage.py"])
-def test_script_entrypoint_invokes_cli(script: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_script_entrypoint_invokes_cli(script: str, patches: ExitStack) -> None:
     """Direct script invocation reaches argument parsing."""
-    monkeypatch.syspath_prepend(str(run_coverage.ROOT / "tools"))
-    monkeypatch.setattr(sys, "argv", [script, "--help"])
+    patches.enter_context(patch.object(sys, "path", [str(run_coverage.ROOT / "tools"), *sys.path]))
+    patches.enter_context(patch.object(sys, "argv", [script, "--help"]))
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(run_coverage.ROOT / "tools" / script), run_name="__main__")
     assert error.value.code == 0
@@ -414,7 +454,7 @@ def test_lcov_summary_tags_do_not_change_locations(tmp_path: Path) -> None:
     report = tmp_path / "rust.lcov"
     report.write_text("TN:unit\n" + LCOV + "LF:1\nFNF:1\n", encoding="utf-8")
     assert report_coverage.rust_counts([report]) == {
-        "src/main.rs": {"lines": {"1": 1}, "functions": {"1:main": 1}},
+        "src/main.rs": {"lines": {"1": 1}, "functions": {"1:main": 1}}
     }
 
 
@@ -461,7 +501,7 @@ def test_native_metadata_rejects_inconsistent_snapshot(matrix: Path) -> None:
 def test_executable_library_source_must_appear_in_report() -> None:
     """The module-only exception stops applying when the library gains code."""
     (report_coverage.ROOT / "src/lib.rs").write_text("fn added() {}\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"src/lib\.rs"):
+    with pytest.raises(ValueError, match="src/lib\\.rs"):
         report_coverage.validate_inventory({}, {})
 
 
@@ -483,19 +523,37 @@ def test_snapshot_normalizes_native_line_endings(tmp_path: Path) -> None:
     assert run_coverage.source_snapshot(tmp_path) == windows
 
 
-def test_collector_rejects_dirty_source_mutation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_collector_rejects_dirty_source_mutation(tmp_path: Path, patches: ExitStack) -> None:
     """Uncommitted edits during collection invalidate the report metadata."""
     output = tmp_path / "coverage"
     collector = Collector(output, [SHA, " M src/main.rs", "export RUSTFLAGS=x", SHA])
-    monkeypatch.setattr(sys, "argv", ["run_coverage", "--output", str(output)])
-    monkeypatch.setattr(subprocess, "check_output", collector.check_output)
-    monkeypatch.setattr(subprocess, "run", collector.run)
-    monkeypatch.setattr(
-        run_coverage,
-        "source_snapshot",
-        MagicMock(side_effect=[{"source": "before"}, {"source": "after"}]),
+    patches.enter_context(patch.object(sys, "argv", ["run_coverage", "--output", str(output)]))
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "check_output",
+            create_autospec(
+                subprocess.check_output, spec_set=True, side_effect=collector.check_output
+            ),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            subprocess,
+            "run",
+            create_autospec(subprocess.run, spec_set=True, side_effect=collector.run),
+        )
+    )
+    patches.enter_context(
+        patch.object(
+            run_coverage,
+            "source_snapshot",
+            create_autospec(
+                run_coverage.source_snapshot,
+                spec_set=True,
+                side_effect=[{"source": "before"}, {"source": "after"}],
+            ),
+        )
     )
     with pytest.raises(SystemExit, match="revision changed"):
         run_coverage.main()

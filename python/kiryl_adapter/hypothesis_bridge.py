@@ -11,13 +11,13 @@ import json
 import sys
 import time
 import traceback
+from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import wraps
 from random import Random
 from typing import TYPE_CHECKING, NotRequired, Protocol, TypedDict, cast
 
 import hypothesis
-import pytest
 from hypothesis import settings, stateful
 from hypothesis.core import (
     HypothesisHandle,
@@ -40,6 +40,7 @@ from hypothesis.stateful import get_state_machine_test
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
     from hypothesis.internal.conjecture.shrinker import Shrinker
 
 from runtime import HYPOTHESIS_VERSION
@@ -426,6 +427,8 @@ def instrument_ordinary(
 
     # Scoped runtime interception: unittest builds the @given wrapper lazily.
     # Explicit parameter types above preserve the pinned factory calling contract.
-    patch = pytest.MonkeyPatch()
-    patch.setattr(stateful, "get_state_machine_test", measured_factory)
-    return patch.undo
+    from unittest.mock import patch  # noqa: PLC0415 -- only stateful measurement needs interception
+
+    patches = ExitStack()
+    patches.enter_context(patch.object(stateful, "get_state_machine_test", new=measured_factory))
+    return patches.close
