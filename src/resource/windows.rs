@@ -222,6 +222,27 @@ mod tests {
     }
     struct OwnedChild(Child);
     impl OwnedChild {
+        fn sleeping() -> Self {
+            let root = std::env::var_os("SystemRoot").unwrap();
+            Self(
+                Command::new(
+                    std::path::PathBuf::from(root)
+                        .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                )
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 60",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            )
+        }
         fn new() -> Self {
             let root = std::env::var_os("SystemRoot").unwrap();
             Self(
@@ -331,12 +352,15 @@ mod tests {
     }
     #[test]
     fn occupied_job_reports_expired_cleanup_deadline() {
-        let child = OwnedChild::new();
+        let mut child = OwnedChild::sleeping();
         let job = Job::attach(&child.0, 1 << 30).unwrap();
         let deadline = Instant::now() + Duration::from_millis(500);
         assert_eq!(
-            job.wait_quiescence(deadline).unwrap_err().to_string(),
-            "job cleanup did not quiesce"
+            job.wait_quiescence(deadline)
+                .map_err(|error| error.to_string()),
+            Err("job cleanup did not quiesce".to_owned()),
+            "owned sleeper state: {:?}",
+            child.0.try_wait()
         );
     }
     #[test]

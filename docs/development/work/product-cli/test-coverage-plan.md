@@ -220,3 +220,20 @@ all eight (10/10 scoped, not whole-repository perfection or coverage acceptance)
 Five review perspectives for each phase above were repeated for scope, ownership,
 error specificity, bounded lifecycle and measurement identity. No coverage
 exclusion, mock backend or product fault flag was introduced.
+
+## Native5 wait-fixture correction
+
+At4bc5462, Linux3.15 and macOS3.14 snapshots match byte-for-byte after LF
+normalization. Their compiled-source union executes all4074Rustlines and402source
+functions, with no zero-hit locations. This omits Windows-only source and is not
+the required six-cell acceptance. All seven Linux kernel-fault cases and ten
+restoration filesystem cases pass in the delegated collection.
+
+Windows stops at the unit deadline test: the supposedly blocked cmd.exe exits
+before500ms, so wait_quiescence correctly returnsOk for an empty job. The previous
+0ms deadline hid that fixture lifetime assumption. The test now owns a trusted
+WindowsPowerShell process executing Start-Sleep for60seconds, with null streams;
+the Job guard and Child guard kill/wait it after the500ms check. A failing assertion
+includes the owned process status. Product waiting policy is unchanged. Native
+Windows execution must verify this fixture and subsequent CLI counter recovery.
+The other four new Windows command/association cases already pass on real MSVC.
