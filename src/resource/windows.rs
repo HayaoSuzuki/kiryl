@@ -355,13 +355,15 @@ mod tests {
         let mut child = OwnedChild::sleeping();
         let job = Job::attach(&child.0, 1 << 30).unwrap();
         let deadline = Instant::now() + Duration::from_millis(500);
-        assert_eq!(
-            job.wait_quiescence(deadline)
-                .map_err(|error| error.to_string()),
-            Err("job cleanup did not quiesce".to_owned()),
-            "owned sleeper state: {:?}",
-            child.0.try_wait()
+        let result = job
+            .wait_quiescence(deadline)
+            .map_err(|error| error.to_string());
+        let child_status = child.0.try_wait().unwrap();
+        assert!(
+            child_status.is_none(),
+            "owned sleeper state: {child_status:?}"
         );
+        assert_eq!(result, Err("job cleanup did not quiesce".to_owned()));
     }
     #[test]
     fn empty_job_has_zero_active_processes() {

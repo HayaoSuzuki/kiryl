@@ -237,3 +237,15 @@ the Job guard and Child guard kill/wait it after the500ms check. A failing asser
 includes the owned process status. Product waiting policy is unchanged. Native
 Windows execution must verify this fixture and subsequent CLI counter recovery.
 The other four new Windows command/association cases already pass on real MSVC.
+
+## Native6 diagnostic execution
+
+Ata159b37 the native Windows3.15 product cell succeeds. Its CLI counters now
+include actual startup, detection, supervision and Windows backend calls,
+confirming normal main return fixes the lost CLI profile. Together with Linux3.15
+and macOS3.14 from the same source snapshot, the sole zero-hit Rust line is
+windows.rs363: child.try_wait inside the failed-assertion diagnostic. This is test
+code that never executes during a passing test. It now runs before the assertion,
+and the test also asserts the owned sleeper is still alive after the deadline.
+No diagnostic or source line is excluded. Complete native remeasurement remains
+required for the changed test bytes.
