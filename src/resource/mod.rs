@@ -139,6 +139,16 @@ pub fn detect() -> Capabilities {
         Err(error) => Capabilities::portable(error.to_string()),
     }
 }
+#[cfg(windows)]
+// Select only the trusted system command and arguments. The common probe owner
+// configures streams and retains stdin until attachment/cleanup completes.
+fn windows_probe_command(root: Option<std::ffi::OsString>) -> io::Result<Command> {
+    let root = root.ok_or_else(|| io::Error::other("missing SystemRoot"))?;
+    let mut command = Command::new(std::path::PathBuf::from(root).join("System32/cmd.exe"));
+    command.args(["/D", "/C", "set /p kiryl_capability_probe="]);
+    Ok(command)
+}
+
 fn detect_native() -> io::Result<Capabilities> {
     #[cfg(unix)]
     let mut command = {
@@ -147,13 +157,7 @@ fn detect_native() -> io::Result<Capabilities> {
         c
     };
     #[cfg(windows)]
-    let mut command = {
-        let root =
-            std::env::var_os("SystemRoot").ok_or_else(|| io::Error::other("missing SystemRoot"))?;
-        let mut c = Command::new(std::path::PathBuf::from(root).join("System32/cmd.exe"));
-        c.args(["/D", "/C", "set /p kiryl_capability_probe="]);
-        c
-    };
+    let mut command = windows_probe_command(std::env::var_os("SystemRoot"))?;
     #[cfg(not(any(unix, windows)))]
     return Err(io::Error::other("no capability probe for platform"));
     #[cfg(any(unix, windows))]
@@ -229,5 +233,32 @@ mod tests {
             .count();
         assert_eq!(guard.terminated, fields[1] == "true");
         assert_eq!(attempts, fields[2].parse::<usize>().unwrap());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_probe_tests {
+    use super::*;
+    use std::{ffi::OsString, path::Path};
+
+    #[test]
+    fn absent_system_root_rejects_probe_construction() {
+        assert_eq!(
+            windows_probe_command(None).unwrap_err().to_string(),
+            "missing SystemRoot"
+        );
+    }
+    #[test]
+    fn supplied_system_root_selects_blocking_trusted_command() {
+        let root = OsString::from(r"C:\owned\Windows");
+        let command = windows_probe_command(Some(root.clone())).unwrap();
+        assert_eq!(
+            Path::new(command.get_program()),
+            Path::new(&root).join("System32/cmd.exe")
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["/D", "/C", "set /p kiryl_capability_probe="]
+        );
     }
 }

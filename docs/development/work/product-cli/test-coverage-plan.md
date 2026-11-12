@@ -175,3 +175,48 @@ cases likewise failed before implementation and then passed. Native timings and
 OS errors are not replaced by unit doubles. No inline or file-level coverage
 exclusions were added. Defensive test-helper paths remain visible and will be
 closed using the next native report.
+
+## Native4 findings and final counter collection
+
+Atd230a68 both delegatedLinux product cells and all four hard-resource gates pass.
+All five real Linux permission-fault cases execute successfully. Windows3.14 also
+passes its product cell; Windows3.15's ordinary suite exposes another2second
+startup-budget assumption (native abort never executes and returncode is0).
+Behavioral CLI proof campaigns and their positive replays now allow10seconds;
+case-timeout and campaign-exhaustion scenarios keep their specific explicit limits.
+
+The native4 Unix union leaves four runtime propagation/poll lines and nine
+restoration-helper lines. A raw SIGKILL replay permission case and an active-case
+periodic permission case cover distinct transport/infrastructure policies. Ten
+filesystem cases exercise missing/unreadable markers, outside ownership, corrupt
+permissions, restoration/write failures and bounded directory removal. The helper
+captures its parent once, never mutates the ambient environment and treats absence
+of its owned directory as successful cleanup. Exact helper code passes all ten
+cases in a temporary macOS Unix harness; native Linux remains the acceptance test.
+
+Windows counters reveal a measurement discrepancy: CLI-only resource paths remain
+zero despite successful instrumented acceptance, while unit counters are present.
+Rust's [upstream coverage regression](https://fuchsia.googlesource.com/third_party/rust/+/f58b2548dc702ebc64a1b6e63f0eb1f99dc7851b/tests/run-coverage/while_early_ret.coverage)
+records that WindowsMSVCprocess::exit bypasses saved profiling counters. The
+[standard-library guidance](https://doc.rust-lang.org/std/process/fn.exit.html)
+recommends returning a Termination value, but its generic exit-handler description
+does not establish profiler behavior on this build. Main now returns ExitCode
+through normal runtime shutdown, preserving0/1/2/130; recovery of counters must be
+verified natively before declaring the hypothesis confirmed.
+
+Private Windows command construction owns missing-SystemRoot admission, trusted
+program arguments; the common probe owner configures streams and blocking stdin.
+Private port association owns its ABI record
+and API operation. Four owned-input/owned-handle tests first failed compilation
+without those boundaries, then cross-target strictClippy passed. The live-job
+deadline test now holds the job through the full500ms budget to exercise polling
+and failure without relying on kernel termination delays.
+
+The scoped design review initially passed six of eight diagnostics (7.5/10),
+identifying mixed helper comments and implicit periodic/EOF error contracts.
+Separate comments now explain admission precedence/payload preservation and active
+case classification/error handling. The reviewer rechecked both rows and passed
+all eight (10/10 scoped, not whole-repository perfection or coverage acceptance).
+Five review perspectives for each phase above were repeated for scope, ownership,
+error specificity, bounded lifecycle and measurement identity. No coverage
+exclusion, mock backend or product fault flag was introduced.

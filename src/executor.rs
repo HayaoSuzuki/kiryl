@@ -1117,8 +1117,6 @@ fn decode_unix_exit(code: i32, value: i32) -> io::Result<std::process::ExitStatu
     Ok(std::process::ExitStatus::from_raw(raw))
 }
 
-// Absence of OOM evidence keeps the case active; failure to read evidence is
-// infrastructure, rather than a claim that the application exceeded its limit.
 // Positive backend evidence takes precedence over a worker's result label while
 // retaining its diagnostic and reproduction payload. Unknown labels need evidence.
 fn admit_observation(mut value: Observation, oom: bool) -> Option<Observation> {
@@ -1130,6 +1128,10 @@ fn admit_observation(mut value: Observation, oom: bool) -> Option<Observation> {
         .then_some(value)
 }
 
+// No positive evidence leaves classification open. OOM during an active case is
+// a case finding; without an active case it is infrastructure. Periodic polling
+// supplies errors here as infrastructure observations. EOF callers propagate
+// counter-read errors with `?` before calling this policy, preserving transport errors.
 fn resource_observation(evidence: io::Result<bool>, active: bool) -> Option<Observation> {
     match evidence {
         Ok(false) => None,
@@ -1437,6 +1439,7 @@ mod tests {
     struct NativeCgroupFault {
         root: PathBuf,
         control: &'static str,
+        parent: PathBuf,
     }
     #[cfg(target_os = "linux")]
     impl NativeCgroupFault {
@@ -1472,9 +1475,14 @@ mod tests {
             Self {
                 root: fixture.root.clone(),
                 control,
+                parent: std::fs::canonicalize(std::env::var_os("KIRYL_CGROUP_PARENT").unwrap())
+                    .unwrap(),
             }
         }
         fn cleanup(&self) -> io::Result<()> {
+            self.cleanup_until(Instant::now() + Duration::from_secs(5))
+        }
+        fn cleanup_until(&self, deadline: Instant) -> io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             let marker = self.root.join("fault-cgroup");
             let group = match std::fs::read_to_string(marker) {
@@ -1482,8 +1490,7 @@ mod tests {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(error),
             };
-            let parent = std::fs::canonicalize(std::env::var_os("KIRYL_CGROUP_PARENT").unwrap())?;
-            if group.parent() != Some(parent.as_path())
+            if group.parent() != Some(self.parent.as_path())
                 || !group
                     .file_name()
                     .unwrap()
@@ -1494,7 +1501,7 @@ mod tests {
                     "refusing cleanup outside the fixture's owned cgroup",
                 ));
             }
-            if !group.exists() {
+            if !group.try_exists()? {
                 return Ok(());
             }
             let original = std::fs::read_to_string(self.root.join("fault-mode"))?;
@@ -1506,14 +1513,15 @@ mod tests {
             // This concrete directory was identified by the fixture worker's own
             // /proc membership after the parent's acknowledged attachment.
             std::fs::write(group.join("cgroup.kill"), b"1")?;
-            let start = Instant::now();
             loop {
-                match std::fs::remove_dir(&group) {
-                    Ok(()) => return Ok(()),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-                    Err(error) if start.elapsed() >= Duration::from_secs(5) => return Err(error),
-                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                let result = std::fs::remove_dir(&group);
+                if result.is_ok() || !group.try_exists()? {
+                    return Ok(());
                 }
+                if Instant::now() >= deadline {
+                    return result;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
         }
     }
@@ -1522,6 +1530,198 @@ mod tests {
         fn drop(&mut self) {
             let _ = self.cleanup();
         }
+    }
+    #[cfg(target_os = "linux")]
+    fn native_cleanup_fixture() -> (SessionFixture, NativeCgroupFault, PathBuf) {
+        let fixture = SessionFixture::new(&[]);
+        let parent = fixture.root.join("owned-parent");
+        std::fs::create_dir(&parent).unwrap();
+        let parent = std::fs::canonicalize(parent).unwrap();
+        let group = parent.join(format!("kiryl-probe-{}-fixture", std::process::id()));
+        std::fs::create_dir(&group).unwrap();
+        std::fs::write(fixture.root.join("fault-cgroup"), group.to_str().unwrap()).unwrap();
+        std::fs::write(fixture.root.join("fault-mode"), "600").unwrap();
+        std::fs::write(group.join("memory.events"), "owned counter").unwrap();
+        std::fs::write(group.join("cgroup.kill"), "0").unwrap();
+        let fault = NativeCgroupFault {
+            root: fixture.root.clone(),
+            control: "memory.events",
+            parent,
+        };
+        (fixture, fault, group)
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_without_marker_has_no_effect() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+        fault.cleanup().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "0"
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_marker_read_error_is_visible() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        let marker = fault.root.join("fault-cgroup");
+        std::fs::remove_file(&marker).unwrap();
+        std::fs::create_dir(&marker).unwrap();
+        assert_eq!(
+            fault.cleanup().unwrap_err().kind(),
+            io::ErrorKind::IsADirectory
+        );
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "0"
+        );
+        std::fs::remove_dir(marker).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_rejects_a_different_parent() {
+        let (fixture, fault, _group) = native_cleanup_fixture();
+        let outside = fixture.root.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("cgroup.kill"), "preserved").unwrap();
+        std::fs::write(fault.root.join("fault-cgroup"), outside.to_str().unwrap()).unwrap();
+        assert_eq!(
+            fault.cleanup().unwrap_err().to_string(),
+            "refusing cleanup outside the fixture's owned cgroup"
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("cgroup.kill")).unwrap(),
+            "preserved"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_rejects_an_unowned_name() {
+        let (_fixture, fault, _group) = native_cleanup_fixture();
+        let outside = fault.parent.join("foreign");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("cgroup.kill"), "preserved").unwrap();
+        std::fs::write(fault.root.join("fault-cgroup"), outside.to_str().unwrap()).unwrap();
+        assert_eq!(
+            fault.cleanup().unwrap_err().to_string(),
+            "refusing cleanup outside the fixture's owned cgroup"
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("cgroup.kill")).unwrap(),
+            "preserved"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_accepts_an_already_removed_group() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::remove_dir_all(&group).unwrap();
+        fault.cleanup().unwrap();
+        assert!(!group.exists());
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_rejects_an_invalid_permission_record() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::write(fault.root.join("fault-mode"), "not-octal").unwrap();
+        assert!(
+            fault
+                .cleanup()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid digit")
+        );
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "0"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_reports_missing_permission_record() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::remove_file(fault.root.join("fault-mode")).unwrap();
+        assert_eq!(fault.cleanup().unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "0"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_reports_permission_restore_failure() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::remove_file(group.join("memory.events")).unwrap();
+        assert_eq!(fault.cleanup().unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "0"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_reports_kill_control_write_failure() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        std::fs::remove_file(group.join("cgroup.kill")).unwrap();
+        std::fs::create_dir(group.join("cgroup.kill")).unwrap();
+        assert_eq!(
+            fault.cleanup().unwrap_err().kind(),
+            io::ErrorKind::IsADirectory
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_fault_cleanup_stops_at_deadline_after_removal_failure() {
+        let (_fixture, fault, group) = native_cleanup_fixture();
+        assert_eq!(
+            fault
+                .cleanup_until(Instant::now() + Duration::from_millis(100))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::DirectoryNotEmpty
+        );
+        assert_eq!(
+            std::fs::read_to_string(group.join("cgroup.kill")).unwrap(),
+            "1"
+        );
+        std::fs::remove_file(fault.root.join("fault-cgroup")).unwrap();
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires delegated cgroup"]
+    fn native_active_resource_counter_failure_is_infrastructure_evidence() {
+        let mut fixture = SessionFixture::sequenced(&[vec![
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"next","test_id":"test"}),
+        ]]);
+        let fault = NativeCgroupFault::install(&mut fixture, 1, "memory.events", true);
+        let script = fixture.root.join("session-1");
+        let body = std::fs::read_to_string(&script).unwrap().replace(
+            &format!("cat '{}'\n", fixture.root.join("fault-ready").display()),
+            "",
+        );
+        std::fs::write(script, body).unwrap();
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap();
+        fault.cleanup().unwrap();
+        let outcome = report.outcomes.last().unwrap();
+        assert_eq!(outcome.kind, "infrastructure");
+        assert!(
+            outcome
+                .detail
+                .as_deref()
+                .unwrap()
+                .starts_with("resource evidence: ")
+        );
+        assert!(outcome.original.is_some());
     }
     #[cfg(target_os = "linux")]
     fn native_failure_frames(replay: bool) -> Vec<Value> {
@@ -2771,5 +2971,35 @@ mod tests {
         );
         assert!(report.attempts > 0);
         assert!(report.attempts <= 512);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires delegated cgroup"]
+    fn native_resource_counter_error_propagates_from_raw_crash_replay() {
+        let mut fixture = SessionFixture::sequenced(&[
+            vec![
+                json!({"kind":"ready","environment":{}}),
+                json!({"kind":"next","test_id":"test"}),
+            ],
+            vec![json!({"kind":"ready","environment":{}})],
+        ]);
+        let first = fixture.root.join("session-1");
+        let script = std::fs::read_to_string(&first).unwrap();
+        let acknowledged = script.strip_suffix("sleep 60\n").unwrap();
+        std::fs::write(first, format!("{acknowledged}kill -KILL $$\n")).unwrap();
+        let fault = NativeCgroupFault::install(&mut fixture, 2, "memory.events", false);
+        let result =
+            Executor::new(Arc::new(AtomicBool::new(false))).explore("test", fixture.config.clone());
+        fault.cleanup().unwrap();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            ExecutionError::Transport(io::Error::from_raw_os_error(libc::EACCES)).to_string()
+        );
+        let original: Value = serde_json::from_slice(
+            &std::fs::read(fixture.config.output.join("finding-0.bin")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(original["observation"]["kind"], "native_crash");
+        assert!(original["observation"]["replay_token"].is_null());
     }
 }

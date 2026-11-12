@@ -55,7 +55,7 @@ def run(root: Path, name: str = "report", *extra: str) -> tuple[int, dict[str, A
         "test_target.py",
         "--best-effort",
         "--duration",
-        "2",
+        "10",
         "--slice",
         "0.5",
         "--store",
@@ -178,7 +178,7 @@ def test_failure_replay_and_minimize_preserve_original(
 ) -> None:
     """Fresh verification and minimization preserve immutable original bytes."""
     original, before = failing_original
-    result = invoke(tmp_path, command, str(original), "--best-effort", "--duration", "2")
+    result = invoke(tmp_path, command, str(original), "--best-effort", "--duration", "10")
     assert result.returncode == 1, result.stderr
     assert original.read_bytes() == before
 
@@ -349,7 +349,7 @@ def test_native_crash_original_and_fresh_raw_replay(tmp_path: Path) -> None:
         str(original),
         "--best-effort",
         "--duration",
-        "2",
+        "10",
         "--report",
         str(tmp_path / "replay.json"),
     )

@@ -69,6 +69,19 @@ fn set<T>(job: HANDLE, class: i32, info: &T) -> io::Result<()> {
         Ok(())
     }
 }
+// Bind this job's notification stream before assigning its first process.
+fn associate_port(job: &Handle, port: &Handle) -> io::Result<()> {
+    let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+        CompletionKey: std::ptr::dangling_mut::<c_void>(),
+        CompletionPort: port.0,
+    };
+    set(
+        job.0,
+        JobObjectAssociateCompletionPortInformation,
+        &association,
+    )
+}
+
 impl Job {
     pub fn attach(child: &Child, memory: u64) -> io::Result<Self> {
         // SAFETY: null pointers request an unnamed job with default security.
@@ -85,15 +98,7 @@ impl Job {
         // SAFETY: INVALID_HANDLE_VALUE creates a standalone completion port.
         let port =
             Handle::new(unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, null_mut(), 0, 1) })?;
-        let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
-            CompletionKey: std::ptr::dangling_mut::<c_void>(),
-            CompletionPort: port.0,
-        };
-        set(
-            job.0,
-            JobObjectAssociateCompletionPortInformation,
-            &association,
-        )?;
+        associate_port(&job, &port)?;
         // SAFETY: job and process are live owned handles; bootstrap cannot import
         // target code until the parent acknowledges this successful assignment.
         if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) } == 0 {
@@ -297,6 +302,18 @@ mod tests {
         assert!(job.active().is_err());
     }
     #[test]
+    fn completion_port_association_accepts_owned_objects() {
+        let job = owned_job_handle();
+        let port = owned_port();
+        associate_port(&job, &port).unwrap();
+    }
+    #[test]
+    fn completion_port_association_rejects_non_job_owned_object() {
+        let wrong_job = owned_port();
+        let port = owned_port();
+        assert!(associate_port(&wrong_job, &port).is_err());
+    }
+    #[test]
     fn limit_configuration_rejects_wrong_owned_object_type() {
         let port = owned_port();
         // SAFETY: the ABI information structure explicitly supports zero initialization.
@@ -316,7 +333,7 @@ mod tests {
     fn occupied_job_reports_expired_cleanup_deadline() {
         let child = OwnedChild::new();
         let job = Job::attach(&child.0, 1 << 30).unwrap();
-        let deadline = Instant::now();
+        let deadline = Instant::now() + Duration::from_millis(500);
         assert_eq!(
             job.wait_quiescence(deadline).unwrap_err().to_string(),
             "job cleanup did not quiesce"

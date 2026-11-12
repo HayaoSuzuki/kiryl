@@ -120,7 +120,7 @@ fn run(context: &mut Value) -> Result<i32, Box<dyn std::error::Error>> {
     .map_err(Into::into)
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let started = std::time::Instant::now();
     let args: Vec<_> = env::args_os().skip(1).collect();
     let mut context = json!({"schema_version":1,"targets":[],"selection_complete":false});
@@ -142,7 +142,9 @@ fn main() {
         }
         completion.exit_code()
     });
-    std::process::exit(code);
+    // Return through the CRT so Windows also runs LLVM's profile-exit handler.
+    // Completion and CLI parsing emit only 0, 1, 2 or 130.
+    std::process::ExitCode::from(u8::try_from(code).expect("CLI exit status fits one byte"))
 }
 
 #[cfg(test)]
