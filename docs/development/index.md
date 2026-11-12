@@ -27,9 +27,8 @@ cargo build --locked --workspace
 ```
 
 `rust-toolchain.toml` selects the same compiler for local development and CI.
-Commit `Cargo.lock` whenever dependencies change. The initial package is an
-empty library scaffold with publishing disabled; it has no third-party Rust
-dependencies and does not provide an executable yet.
+Commit `Cargo.lock` whenever dependencies change. The product package provides a checkout CLI with publishing disabled.
+See the user guide for pinned Python adapter dependencies and execution limits.
 
 Install [prek](https://prek.j178.dev/) and enable the local hooks:
 
@@ -50,8 +49,8 @@ cargo test --locked --workspace --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --all-features --no-deps
 ```
 
-The Rust scaffold currently contains no behavioral tests. Add tests for actual
-behavior as implementation begins; a successful empty Rust suite only checks setup.
+Rust tests cover storage, transport, scheduler and budget behavior. Product
+Python tests include actual CLI subprocess scenarios after `cargo build`.
 The Python tooling tests exercise documentation validation. Run those and the
 strict user-site build using the [documentation procedure](documentation.md).
 
@@ -101,3 +100,58 @@ Use the [implementation plan](work/coverage-guided-python-fuzzing/feasibility-pl
 and [experimental workflow](../../.github/workflows/fuzzing-feasibility.yml) for
 its separate lockfiles and commands. These experiments do not install a product
 CLI or establish platform support merely by configuring the matrix.
+
+## Product adapter and CLI verification
+
+```sh
+uv sync --project python --frozen --python 3.14
+cargo build --locked
+uv run --project python --frozen --no-sync ruff check python
+uv run --project python --frozen --no-sync ruff format --check python
+uv run --project python --frozen --no-sync ty check --project python
+uv run --project python --frozen --no-sync pytest -c python/pyproject.toml python/tests
+lake -d formal build
+formal/.lake/build/bin/scheduler-oracle --check formal/scheduler-cases.tsv
+cargo run --locked --manifest-path formal/check/Cargo.toml
+```
+
+The product workflow separates the native matrix, Lean correspondence and finite
+scheduler fuzz campaign. See the [acceptance record](work/product-cli/acceptance-review.md)
+for local observations and unverified native hard-resource gates. Do not count
+best-effort execution as hard enforcement acceptance.
+
+## Independent cases and coverage
+
+Follow the [test quality contract](knowledge/test-quality.md). Enumerated inputs
+use rstest/pytest parameters; generated invariants use proptest/Hypothesis. One
+invocation exercises one case, with no conditional or loop control flow in its
+body. Keep infrastructure supervision in fixtures instead of grouping cases.
+
+Install the pinned coverage collector and LLVM tools, then collect one native cell:
+
+```sh
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --version 0.9.1 --locked
+python tools/run_coverage.py --python python/.venv/bin/python
+```
+
+On Windows select `python/.venv/Scripts/python.exe`. The collector reports local
+missing source; it does not claim other platforms were tested. It runs instrumented
+Rust tests and the same instrumented CLI through randomized Python acceptance.
+Default cargo-llvm-cov exclusions for tests are disabled. Input hashes detect
+uncommitted source changes during collection; reports retain revision and dirty
+state. Generated evidence lives under ignored `product-evidence/coverage/`.
+
+Product CI collects all six native OS/interpreter cells. Download their artifacts
+into one directory and run `python tools/report_coverage.py DIRECTORY`. This gate
+requires all cells, identical source/revision, complete source inventory, exact
+Rust line/function coverage and exact Python statement/branch coverage, including
+test implementations and coverage tooling. Missing native tests and zero-hit
+functions remain failures. No percentages are rounded up to meet the contract.
+
+Linux CI uses [the dedicated delegation launcher](../../tools/with-delegated-cgroup.sh)
+for hard-backend coverage and hard-resource gates. It requires the host's unified
+mount to already distribute memory, provisions only its own subtree, and executes
+the command as the ordinary runner. It never enables controllers on shared ancestors.
+The [hard-resource workflow](../../.github/workflows/product-hard-resource.yml) owns
+its native evidence rather than counting unprivileged fallback as enforcement.

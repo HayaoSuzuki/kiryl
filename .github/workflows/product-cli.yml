@@ -1,0 +1,173 @@
+name: Product CLI
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-cli-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  native:
+    name: Product ${{ matrix.os }} Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.14', '3.15']
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON_VERSION: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - name: Install pinned product dependencies and Rust
+        run: |
+          uv sync --project python --frozen --python "$PYTHON_VERSION"
+          rustup toolchain install
+      - name: Rust strict checks and product tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --workspace --all-features
+          cargo build --locked
+      - name: Python strict checks and product tests
+        run: |
+          uv run --project python --frozen --no-sync ruff check python
+          uv run --project python --frozen --no-sync ruff format --check python
+          uv run --project python --frozen --no-sync ruff check --config python/pyproject.toml tools/run_coverage.py tools/report_coverage.py
+          uv run --project python --frozen --no-sync ruff format --config python/pyproject.toml --check tools/run_coverage.py tools/report_coverage.py
+          uv run --project python --frozen --no-sync ty check --project python --python-version "$PYTHON_VERSION"
+          mkdir -p product-evidence
+          uv run --project python --frozen --no-sync pytest -c python/pyproject.toml python/tests -q --junitxml=product-evidence/python.xml
+      - name: Install fixed native coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Collect Rust and Python coverage including test implementations
+        run: |
+          product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            tools/with-delegated-cgroup.sh env RUST_TEST_THREADS=1 "$product_python" tools/run_coverage.py --python "$product_python"
+          else
+            "$product_python" tools/run_coverage.py --python "$product_python"
+          fi
+      - name: Run real best-effort CLI smoke campaign
+        run: |
+          product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          product_binary="$PWD/target/debug/kiryl"
+          if [[ "$RUNNER_OS" == Windows ]]; then product_binary="$product_binary.exe"; fi
+          product_evidence="$PWD/product-evidence"
+          mkdir -p "$product_evidence"
+          smoke_root=$(mktemp -d)
+          cat > "$smoke_root/test_smoke.py" <<'PY'
+          from hypothesis import given, strategies as st
+
+          @given(st.binary(max_size=32))
+          def test_identity(value):
+              assert value == bytes(value)
+          PY
+          cd "$smoke_root"
+          smoke_code=0
+          "$product_binary" run test_smoke.py --python "$product_python" --best-effort --duration 5 --store "$smoke_root/store" --report "$product_evidence/smoke.json" || smoke_code=$?
+          if (( smoke_code > 1 )); then exit "$smoke_code"; fi
+          "$product_python" -c 'import json,sys; r=json.load(open(sys.argv[1], encoding="utf-8")); assert r["schema_version"] == 1; assert r["targets"]; assert r["targets"][0]["attempts"] > 0' "$product_evidence/smoke.json"
+      - name: Verify pytest 9.1.1 compatibility with real product execution
+        run: |
+          compatibility_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
+          uv pip install --python "$compatibility_python" pytest==9.1.1
+          "$compatibility_python" -c 'import pytest; assert pytest.__version__ == "9.1.1"'
+          "$compatibility_python" -m pytest -c python/pyproject.toml python/tests -q --junitxml=product-evidence/pytest-9.1.1.xml
+      - name: Retain observations including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: product-${{ matrix.os }}-python-${{ matrix.python }}
+          path: product-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+  formal:
+    name: Product scheduler model correspondence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned official Lean distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lean_destination="$RUNNER_TEMP/kiryl-product-lean"
+          mkdir -p "$lean_destination"
+          gh release download v4.34.1 --repo leanprover/lean4 --pattern lean-4.34.1-linux.tar.zst --dir "$lean_destination"
+          tar --zstd -xf "$lean_destination/lean-4.34.1-linux.tar.zst" -C "$lean_destination"
+          echo "$lean_destination/lean-4.34.1-linux/bin" >> "$GITHUB_PATH"
+      - name: Build model and compare generated cases with product Rust
+        run: |
+          rustup toolchain install
+          lake -d formal build
+          formal/.lake/build/bin/scheduler-oracle --check formal/scheduler-cases.tsv
+          cargo run --locked --manifest-path formal/check/Cargo.toml
+
+  fuzz:
+    name: Finite product scheduler fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install dated nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly-2026-10-08
+          cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Exercise scheduler with finite time and memory bounds
+        run: cargo +nightly-2026-10-08 fuzz run scheduler -- -max_total_time=30 -max_len=4352 -rss_limit_mb=1024 -seed=17
+      - name: Retain fuzz corpus and failure inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: product-scheduler-fuzz
+          path: |
+            fuzz/corpus/
+            fuzz/artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  coverage:
+    name: Complete native coverage including tests
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: product-*-python-*
+          path: native-coverage
+      - name: Require exact coverage across native platforms
+        run: python tools/report_coverage.py native-coverage

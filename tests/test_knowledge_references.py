@@ -1,5 +1,6 @@
 """Small filesystem fixtures for the knowledge reference inventory."""
 
+from operator import itemgetter
 from pathlib import Path
 
 import pytest
@@ -25,8 +26,8 @@ def test_missing_sources_links_and_unreachable_pages_are_independent(
     (tmp_path / "orphan.md").write_text("orphan\n")
     result = inventory(tmp_path)
     assert len(result["missing_markdown"]) == 2
-    assert {row["target"] for row in result["missing_markdown"]} == {"gone.rs"}
-    assert [row["id"] for row in result["missing_sources"]] == ["missing"]
+    assert set(map(itemgetter("target"), result["missing_markdown"])) == {"gone.rs"}
+    assert list(map(itemgetter("id"), result["missing_sources"])) == ["missing"]
     assert result["unreachable_pages"] == ["orphan.md"]
     assert len(result["sources"]) == 2
 
@@ -53,7 +54,7 @@ def test_unused_reference_definition_does_not_create_navigation(tmp_path: Path) 
     (tmp_path / "hidden.md").write_text("hidden\n")
     result = inventory(tmp_path)
     assert result["unreachable_pages"] == ["hidden.md"]
-    assert [row["target"] for row in result["markdown"]] == ["hidden.md"]
+    assert list(map(itemgetter("target"), result["markdown"])) == ["hidden.md"]
 
 
 def test_used_references_and_footnotes_create_navigation(tmp_path: Path) -> None:
@@ -64,8 +65,11 @@ def test_used_references_and_footnotes_create_navigation(tmp_path: Path) -> None
         "[footnote-source]: evidence.md\n"
         "[^unused]: [hidden](hidden.md)\n"
     )
-    for name in ("child", "collapsed", "shortcut", "evidence", "hidden"):
-        (tmp_path / f"{name}.md").write_text(name)
+    (tmp_path / "child.md").write_text("child")
+    (tmp_path / "collapsed.md").write_text("collapsed")
+    (tmp_path / "shortcut.md").write_text("shortcut")
+    (tmp_path / "evidence.md").write_text("evidence")
+    (tmp_path / "hidden.md").write_text("hidden")
     result = inventory(tmp_path)
     assert result["unreachable_pages"] == ["hidden.md"]
     assert result["missing_markdown"] == []

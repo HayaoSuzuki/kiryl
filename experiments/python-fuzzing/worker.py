@@ -6,12 +6,30 @@ import sys
 from dataclasses import asdict
 from typing import TYPE_CHECKING, cast
 
+from model import ControlKind, ResultKind, WorkerMode
 from wire import receive, send
 
 if TYPE_CHECKING:
     from typing import BinaryIO
 
     from adapter import CaseResult
+
+
+def _control_kind(message: dict[str, object]) -> ControlKind | None:
+    """Decode incoming labels; callers own operation-specific rejection messages."""
+    try:
+        return ControlKind(message["kind"])
+    except ValueError:
+        return None
+
+
+def _operation_mode(value: object) -> WorkerMode:
+    """Decode external operation labels while retaining the protocol diagnostic."""
+    try:
+        return WorkerMode(value)
+    except ValueError as error:
+        message = "unknown worker mode"
+        raise ValueError(message) from error
 
 
 def _observation(case: CaseResult) -> dict[str, object]:
@@ -32,11 +50,11 @@ class Driver:
 
     def next_case(self, nodeid: str) -> bytes | None:
         """Ask only after pytest has set up the target invocation."""
-        send(self.control, {"kind": "next", "test_id": nodeid})
+        send(self.control, {"kind": ControlKind.NEXT, "test_id": nodeid})
         message = receive(sys.stdin.buffer)
-        if message["kind"] == "end":
+        if _control_kind(message) == ControlKind.END:
             return None
-        if message["kind"] != "case":
+        if _control_kind(message) != ControlKind.CASE:
             error = "unexpected controller response"
             raise ValueError(error)
         self.case_id = cast("int", message["case_id"])
@@ -45,8 +63,11 @@ class Driver:
     def begin_ordinary(self, nodeid: str) -> None:
         """Publish normal Hypothesis execution boundaries without requesting input."""
         self.case_id += 1
-        send(self.control, {"kind": "baseline_case", "test_id": nodeid, "case_id": self.case_id})
-        if receive(sys.stdin.buffer)["kind"] != "ack":
+        send(
+            self.control,
+            {"kind": ControlKind.BASELINE_CASE, "test_id": nodeid, "case_id": self.case_id},
+        )
+        if _control_kind(receive(sys.stdin.buffer)) != ControlKind.ACK:
             message = "missing ordinary-case acknowledgment"
             raise ValueError(message)
 
@@ -55,12 +76,14 @@ class Driver:
         send(
             self.control,
             {
-                "kind": "skipped" if result.kind == "skip" else "result",
+                "kind": ControlKind.SKIPPED
+                if result.kind == ResultKind.SKIP
+                else ControlKind.RESULT,
                 "case_id": self.case_id,
                 "observation": _observation(result),
             },
         )
-        if receive(sys.stdin.buffer)["kind"] != "ack":
+        if _control_kind(receive(sys.stdin.buffer)) != ControlKind.ACK:
             message = "missing finding acknowledgment"
             raise ValueError(message)
 
@@ -88,7 +111,7 @@ def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
     send(
         control,
         {
-            "kind": "ready",
+            "kind": ControlKind.READY,
             "environment": {
                 "platform": sys.platform,
                 "python": list(sys.version_info[:2]),
@@ -97,7 +120,7 @@ def _bootstrap() -> tuple[BinaryIO, dict[str, object]]:
         },
     )
     request = receive(sys.stdin.buffer)
-    if request["kind"] != "start":
+    if _control_kind(request) != ControlKind.START:
         message = "session was not acknowledged"
         raise ValueError(message)
     import site  # noqa: PLC0415 -- load environment only after resource attachment
@@ -124,41 +147,48 @@ def _dispatch(control: BinaryIO, request: dict[str, object]) -> None:
 
     nodeid = cast("str", request["test_id"])
     args = cast("list[str]", request["pytest_args"])
-    mode = request.get("mode", "run")
+    mode = _operation_mode(request.get("mode", WorkerMode.RUN))
     driver = Driver(control)
-    if mode == "run":
+    if mode == WorkerMode.RUN:
         evidence = run_session(args, [Invocation(nodeid, ())], driver)
-        infrastructure = [asdict(case) for case in evidence.cases if case.kind == "infrastructure"]
+        infrastructure = [
+            {**asdict(case), "kind": case.kind.value, "verification": case.verification.value}
+            for case in evidence.cases
+            if case.kind == ResultKind.INFRASTRUCTURE
+        ]
         if infrastructure:
-            send(control, {"kind": "error", "message": str(infrastructure)[-4096:]})
-    elif mode == "baseline":
+            send(control, {"kind": ControlKind.ERROR, "message": str(infrastructure)[-4096:]})
+    elif mode == WorkerMode.BASELINE:
         code, statistics = run_ordinary(args, driver.begin_ordinary, driver.observe)
-        send(control, {"kind": "baseline_done", "exit_code": code, "statistics": statistics})
-    elif mode == "replay":
+        send(
+            control,
+            {"kind": ControlKind.BASELINE_DONE, "exit_code": code, "statistics": statistics},
+        )
+    elif mode == WorkerMode.REPLAY:
         token = bytes(cast("list[int]", request["token"]))
 
         def before_replay() -> None:
-            send(control, {"kind": "replay_case", "test_id": nodeid})
-            if receive(sys.stdin.buffer)["kind"] != "ack":
+            send(control, {"kind": ControlKind.REPLAY_CASE, "test_id": nodeid})
+            if _control_kind(receive(sys.stdin.buffer)) != ControlKind.ACK:
                 message = "missing replay-case acknowledgment"
                 raise ValueError(message)
 
         driver.observe(run_token(nodeid, token, args, before_replay))
-    elif mode == "minimize":
+    else:
         token = bytes(cast("list[int]", request["token"]))
 
         def before_case(candidate: bytes) -> None:
-            send(control, {"kind": "candidate", "token": list(candidate)})
-            if receive(sys.stdin.buffer)["kind"] != "ack":
+            send(control, {"kind": ControlKind.CANDIDATE, "token": list(candidate)})
+            if _control_kind(receive(sys.stdin.buffer)) != ControlKind.ACK:
                 message = "missing shrink candidate acknowledgment"
                 raise ValueError(message)
 
         shrunk = minimize(nodeid, token, cast("float", request["budget_seconds"]), before_case)
-        send(control, {"kind": "shrunk", "token": list(shrunk.best), "complete": shrunk.complete})
-    else:
-        message = "unknown worker mode"
-        raise ValueError(message)
-    send(control, {"kind": "done"})
+        send(
+            control,
+            {"kind": ControlKind.SHRUNK, "token": list(shrunk.best), "complete": shrunk.complete},
+        )
+    send(control, {"kind": ControlKind.DONE})
 
 
 def main() -> None:
@@ -171,8 +201,8 @@ def main() -> None:
     try:
         _dispatch(control, request)
     except skip_exceptions_to_reraise():
-        Driver(control).observe(CaseResult(cast("str", request["test_id"]), "skip"))
-        send(control, {"kind": "done"})
+        Driver(control).observe(CaseResult(cast("str", request["test_id"]), ResultKind.SKIP))
+        send(control, {"kind": ControlKind.DONE})
 
 
 if __name__ == "__main__":

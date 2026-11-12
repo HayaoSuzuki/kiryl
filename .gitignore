@@ -42,3 +42,17 @@ experiments/python-fuzzing/fuzz/coverage/
 # Reproducible experimental runs; compact observed summaries belong in docs
 experiments/python-fuzzing/results/
 /feasibility-evidence/
+
+# Product fuzzing outputs and local campaign data
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+/.kiryl/
+/product-evidence/
+
+# Instrumented coverage profiles and reports
+.coverage*
+htmlcov/
+coverage.xml
+*.profraw
+*.profdata

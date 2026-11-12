@@ -6,14 +6,16 @@ import json
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, cast
 
+from model import BenchmarkMode, ComparisonTarget, ProbeStatus
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 BUDGET_SECONDS = 20
 
 PROBES = frozenset({"fixtures", "stateful", "replay", "crash", "logs", "monitoring", "hard_memory"})
-MODES = frozenset({"guided", "unguided", "hypothesis"})
-TARGETS = frozenset({"branching", "stateful"})
+MODES = frozenset(BenchmarkMode)
+TARGETS = frozenset(ComparisonTarget)
 
 
 PROBE_TESTS = {
@@ -40,27 +42,31 @@ PROBE_TESTS = {
 }
 
 
-def probe_results(path: Path | None) -> dict[str, str]:
+def probe_results(path: Path | None) -> dict[str, ProbeStatus]:
     """Extract only observed pytest outcomes; missing/skipped tests stay unverified."""
-    statuses = dict.fromkeys(PROBE_TESTS, "unverified")
+    statuses = dict.fromkeys(PROBE_TESTS, ProbeStatus.UNVERIFIED)
     if path is None:
         return statuses
     tree = ET.parse(path)  # noqa: S314 -- locally generated, owned pytest JUnit file
-    observed: dict[str, list[str]] = {}
+    observed: dict[str, list[ProbeStatus]] = {}
     for case in tree.iter("testcase"):
         name = case.get("name", "").split("[", 1)[0]
         status = (
-            "failed"
+            ProbeStatus.FAILED
             if case.find("failure") is not None or case.find("error") is not None
-            else "unverified"
+            else ProbeStatus.UNVERIFIED
             if case.find("skipped") is not None
-            else "passed"
+            else ProbeStatus.PASSED
         )
         observed.setdefault(name, []).append(status)
     for category, names in PROBE_TESTS.items():
-        values = [state for name in names for state in observed.get(name, ["unverified"])]
+        values = [state for name in names for state in observed.get(name, [ProbeStatus.UNVERIFIED])]
         statuses[category] = (
-            "failed" if "failed" in values else "unverified" if "unverified" in values else "passed"
+            ProbeStatus.FAILED
+            if ProbeStatus.FAILED in values
+            else ProbeStatus.UNVERIFIED
+            if ProbeStatus.UNVERIFIED in values
+            else ProbeStatus.PASSED
         )
     return statuses
 
@@ -125,18 +131,18 @@ def _provenance(root: Path, value: dict[str, object]) -> list[str]:
         or value.get("native") is not True
     ):
         errors.append("missing native provenance")
-    probes = _object(value.get("probes"))
-    if set(probes) != PROBES or any(
-        v not in {"passed", "failed", "unverified"} for v in probes.values()
-    ):
+    probes = {name: ProbeStatus(status) for name, status in _object(value.get("probes")).items()}
+    if set(probes) != PROBES:
         errors.append("missing/invalid required probe categories")
-    if "probe_source" in value or any(status != "unverified" for status in probes.values()):
+    if "probe_source" in value or any(
+        status != ProbeStatus.UNVERIFIED for status in probes.values()
+    ):
         errors.extend(_probe_provenance(root, value, environment))
     completed = value.get("completed_cells")
     own = f"{environment.get('platform')}-{'.'.join(map(str, cast('list[int]', python)))}"
     if not isinstance(completed, list) or any(cell != own for cell in completed):
         errors.append("unobserved platform completion")
-    elif completed and any(status != "passed" for status in probes.values()):
+    elif completed and any(status != ProbeStatus.PASSED for status in probes.values()):
         errors.append("unverified gate cannot complete a platform")
     sources = _object(value.get("sources"))
     if not sources or any(
@@ -183,14 +189,16 @@ def _comparisons(root: Path, value: dict[str, object]) -> list[str]:
     if not isinstance(runs, list):
         return [*errors, "missing runs"]
     namespaces: list[Path] = []
-    keys: set[tuple[str, str]] = set()
+    keys: set[tuple[ComparisonTarget, BenchmarkMode]] = set()
     for raw in runs:
         run = _object(raw)
-        mode, target = run.get("mode"), run.get("target")
-        if mode not in MODES or target not in TARGETS:
+        try:
+            mode = BenchmarkMode(run.get("mode"))
+            target = ComparisonTarget(run.get("target"))
+        except ValueError:
             errors.append("invalid comparison mode/target")
         else:
-            key = (cast("str", target), cast("str", mode))
+            key = (target, mode)
             if key in keys:
                 errors.append("duplicate comparison")
             keys.add(key)

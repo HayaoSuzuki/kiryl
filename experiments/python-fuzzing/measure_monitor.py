@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from adapter import Invocation, run_session
+from model import ResultKind
 
 
 def main() -> None:
@@ -43,7 +44,9 @@ def test_property(n):
                     collect_coverage=enabled,
                 )
             elapsed = time.perf_counter_ns() - start
-            if len(evidence.cases) != cases or any(case.kind != "pass" for case in evidence.cases):
+            if len(evidence.cases) != cases or any(
+                case.kind != ResultKind.PASS for case in evidence.cases
+            ):
                 message = "timing specimen did not complete all cases"
                 raise RuntimeError(message)
             timings["monitored_ns" if enabled else "direct_ns"] = elapsed

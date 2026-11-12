@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 
+from model import ArtifactMode
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -70,9 +72,10 @@ def lifecycle():
 @pytest.fixture
 def blocked_receive():
     import worker
+    time.sleep(1)
     original = worker.receive
     def blocked(stream):
-        time.sleep(2)
+        time.sleep(60)
         return {}
     worker.receive = blocked
     yield
@@ -151,6 +154,10 @@ def test_corrupt(value):
 
 @given(st.integers(0, 255))
 def test_crash(value):
+    from pathlib import Path
+    previous = Path("crash-attempted")
+    time.sleep(0.3 * previous.exists())
+    previous.touch()
     os.abort()
 
 @given(st.integers(0, 255))
@@ -185,8 +192,9 @@ def test_shrink_crash(value):
 
 @pytest.fixture
 def slow_teardown():
+    time.sleep(4)
     yield
-    time.sleep(5)
+    time.sleep(60)
 
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.integers(0, 255))
@@ -214,14 +222,14 @@ def test_ok(value):
 
 @pytest.fixture
 def probe_run(process_project: Path) -> Callable[..., tuple[int, Report]]:
-    """Run a bounded real parent with a separate output namespace each time."""
+    """Run a real parent with scenario limits and an external fifteen-second watchdog."""
     serial = 0
 
     def run(  # noqa: PLR0913 -- explicit independent process-probe limit overrides
         names: tuple[str, ...],
         *,
-        campaign_ms: int | None = 5000,
-        case_ms: int = 1000,
+        campaign_ms: int | None = None,
+        case_ms: int = 5000,
         slice_ms: int = 1000,
         inputs: tuple[bytes, ...] = (b"\x08",),
         allow_best_effort: bool = True,
@@ -300,13 +308,19 @@ def test_output_is_bounded_and_control_survives(
     assert report["outcomes"][0]["kind"] == "pass"
 
 
-def test_case_timeout_is_distinct_from_campaign(
+def test_case_timeout_without_campaign_deadline(
     probe_run: Callable[..., tuple[int, Report]],
 ) -> None:
-    """Whole-campaign cancellation takes priority over a simultaneous case expiry."""
+    """An active case can expire independently of whole-campaign cancellation."""
     code, report = probe_run(("hang",), case_ms=60)
     assert code == 1
     assert report["outcomes"][0]["kind"] == "case_timeout"
+
+
+def test_campaign_deadline_precedes_longer_case_budget(
+    probe_run: Callable[..., tuple[int, Report]],
+) -> None:
+    """The explicit global budget can end before the longer per-case allowance."""
     code, report = probe_run(("hang",), campaign_ms=500, case_ms=5000)
     assert code == 1
     assert report["outcomes"][-1]["kind"] == "campaign_cancelled"
@@ -385,8 +399,8 @@ def test_crash_during_shrink_retains_original_and_active_token(
 def test_exhausted_budget_preserves_pending_original(
     probe_run: Callable[..., tuple[int, Report]],
 ) -> None:
-    """A replay terminated by the total deadline leaves the original pending."""
-    code, report = probe_run(("setup_wait",), campaign_ms=3000)
+    """Cancellation during incomplete post-failure teardown retains pending evidence."""
+    code, report = probe_run(("setup_wait",), campaign_ms=8000)
     assert code == 1
     finding = report["outcomes"][0]
     assert finding["original"]
@@ -447,7 +461,9 @@ def test_blocked_input_writer_cannot_hide_campaign_deadline(
 ) -> None:
     """A real worker can request input then stop reading; parent deadlines still apply."""
     supplied = b"x" * 65536
-    code, report = probe_run(("blocked_input",), inputs=(supplied,), campaign_ms=700)
+    code, report = probe_run(
+        ("blocked_input",), inputs=(supplied,), campaign_ms=8000, case_ms=20000
+    )
     assert code == 1
     outcome = report["outcomes"][0]
     assert outcome["kind"] == "campaign_cancelled"
@@ -479,6 +495,16 @@ def test_non_object_config_reports_infrastructure(tmp_path: Path) -> None:
     assert json.loads((out / "report.json").read_text())["outcomes"][0]["kind"] == "infrastructure"
 
 
+def _minimization_record(value: dict[str, object]) -> bool:
+    """Select one process-boundary minimization record from stored wire evidence."""
+    return ArtifactMode(value["mode"]) == ArtifactMode.MINIMIZE
+
+
+def _retained_original(value: Outcome) -> bool:
+    """Select the finding carrying immutable original bytes in a report."""
+    return bool(value["original"])
+
+
 def test_unlimited_campaign_has_no_hidden_one_second_shrink_budget(
     probe_run: Callable[..., tuple[int, Report]],
 ) -> None:
@@ -487,44 +513,57 @@ def test_unlimited_campaign_has_no_hidden_one_second_shrink_budget(
     assert code == 1
     finding = report["outcomes"][0]
     records = [json.loads(Path(path).read_text())["evidence"] for path in finding["derived"]]
-    minimized = [item for item in records if item["mode"] == "minimize"]
+    minimized = list(filter(_minimization_record, records))
     assert minimized
     assert minimized[0]["complete"] is True
 
 
 @pytest.mark.parametrize("feedback", [True, False])
-@pytest.mark.parametrize("target", ["crash", "hang", "crash_later", "hang_later"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        pytest.param(("crash", 1, 5000, "native_crash"), id="crash"),
+        pytest.param(("hang", 1, 150, "case_timeout"), id="hang"),
+        pytest.param(("crash_later", 2, 5000, "native_crash"), id="crash_later"),
+        pytest.param(("hang_later", 2, 150, "case_timeout"), id="hang_later"),
+    ],
+)
 @pytest.mark.parametrize("scheduled", [(), (b"\x00",)])
 def test_generated_finding_replays_retained_input(
     probe_run: Callable[..., tuple[int, Report]],
-    target: str,
+    fault: tuple[str, int, int, str],
     scheduled: tuple[bytes, ...],
     *,
     feedback: bool,
 ) -> None:
     """Generated bytes, absent from the input schedule, survive fresh raw replay."""
+    target, minimum_attempts, case_ms, expected_kind = fault
     code, report = probe_run(
-        (target,), inputs=scheduled, search=True, feedback=feedback, case_ms=150
+        (target,), inputs=scheduled, search=True, feedback=feedback, case_ms=case_ms
     )
     assert code == 1
-    finding = next(outcome for outcome in report["outcomes"] if outcome["original"])
-    assert finding["verification"] == "confirmed"
+    finding = next(filter(_retained_original, report["outcomes"]))
+    assert finding["kind"] == expected_kind, report
+    assert finding["verification"] == "confirmed", report
     original = json.loads(Path(finding["original"]).read_text())
     assert original["input"]
-    if target.endswith("later"):
-        assert report["attempts"] > 1
+    assert report["attempts"] >= minimum_attempts
     derived = json.loads(Path(finding["derived"][0]).read_text())
     assert derived["evidence"]["input"] == original["input"]
 
 
+@pytest.mark.parametrize("setup_seconds", [0.3, 2.5])
 def test_replay_case_budget_excludes_fixture_setup(
-    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+    probe_run: Callable[..., tuple[int, Report]], process_project: Path, setup_seconds: float
 ) -> None:
     """All fresh executions reach the oracle despite setup exceeding case time."""
-    code, report = probe_run(("fast_failure",), case_ms=150, campaign_ms=5000)
+    target = process_project / "test_process.py"
+    target.write_text(target.read_text().replace("time.sleep(0.3)", f"time.sleep({setup_seconds})"))
+    # Isolate the per-case contract from an unrelated whole-campaign deadline.
+    code, report = probe_run(("fast_failure",), case_ms=150, campaign_ms=None)
     assert code == 1
     finding = report["outcomes"][0]
-    assert finding["verification"] == "confirmed"
+    assert finding["verification"] == "confirmed", report
     assert (
         len((process_project / "slow-teardown.txt").read_text().splitlines())
         >= DISCOVERY_REPLAY_SHRINK
@@ -574,6 +613,7 @@ def test_skip_setup(skipped_setup, value):
     assert report["useful"] == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX reserved-FD fault injection")
 def test_done_cannot_silently_discard_active_case(
     probe_run: Callable[..., tuple[int, Report]], process_project: Path
 ) -> None:
@@ -591,8 +631,6 @@ def test_early_done(value):
     time.sleep(2)
 """
     )
-    if os.name == "nt":
-        pytest.skip("POSIX reserved-FD fault injection")
     code, report = probe_run(("early_done",))
     assert code == 2  # noqa: PLR2004 -- infrastructure failure
     assert report["outcomes"][0]["kind"] == "infrastructure"

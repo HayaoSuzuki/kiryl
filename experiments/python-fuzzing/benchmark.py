@@ -14,6 +14,16 @@ from pathlib import Path
 from typing import cast
 
 from evidence import BUDGET_SECONDS, probe_results, validate
+from model import (
+    BenchmarkMode,
+    ComparisonTarget,
+    OutcomeKind,
+    ProbeStatus,
+    SummaryStatus,
+    Verification,
+    decode_outcome,
+    decode_verification,
+)
 
 ROOT = Path(__file__).resolve().parent
 INFRASTRUCTURE_EXIT = 2
@@ -21,6 +31,7 @@ INFRASTRUCTURE_EXIT = 2
 BINARY = ROOT / "target/debug" / ("fuzz-probe.exe" if os.name == "nt" else "fuzz-probe")
 SOURCES = (
     "adapter.py",
+    "model.py",
     "hypothesis_bridge.py",
     "monitor.py",
     "worker.py",
@@ -33,6 +44,7 @@ SOURCES = (
     "Cargo.lock",
     "src/lib.rs",
     "src/controller.rs",
+    "src/types.rs",
     "src/search.rs",
     "src/artifacts.rs",
     "src/wire.rs",
@@ -71,7 +83,7 @@ def _versions() -> dict[str, str]:
 
 
 def _run_mode(
-    root: Path, target: str, mode: str, seed: int, budget_seconds: float
+    root: Path, target: ComparisonTarget, mode: BenchmarkMode, seed: int, budget_seconds: float
 ) -> dict[str, object]:
     namespace = root / f"{target}-{mode}"
     workspace = namespace / "workspace"
@@ -83,7 +95,7 @@ def _run_mode(
     database.mkdir()
     (namespace / "corpus").mkdir()
     initial = list(database.iterdir())
-    suffix = "test_branching" if target == "branching" else "TestStore::runTest"
+    suffix = "test_branching" if target == ComparisonTarget.BRANCHING else "TestStore::runTest"
     config = {
         "python": sys.executable,
         "pytest_args": [
@@ -99,9 +111,9 @@ def _run_mode(
             "retained_output_bytes": 4096,
         },
         "seed": seed,
-        "search": mode != "hypothesis",
-        "feedback": mode == "guided",
-        "baseline": mode == "hypothesis",
+        "search": mode != BenchmarkMode.HYPOTHESIS,
+        "feedback": mode == BenchmarkMode.GUIDED,
+        "baseline": mode == BenchmarkMode.HYPOTHESIS,
     }
     config_path = namespace / "config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -115,7 +127,9 @@ def _run_mode(
     report_path = namespace / "report.json"
     report = cast("dict[str, object]", json.loads(report_path.read_text(encoding="utf-8")))
     outcomes = cast("list[dict[str, object]]", report["outcomes"])
-    finding = next((row for row in outcomes if row["kind"] == "failure"), None)
+    finding = next(
+        (row for row in outcomes if decode_outcome(row["kind"]) == OutcomeKind.FAILURE), None
+    )
     return {
         "mode": mode,
         "target": target,
@@ -130,7 +144,8 @@ def _run_mode(
         "capabilities": report["capabilities"],
         "exit_code": completed.returncode,
         "discovered": report["first_discovery_ms"] is not None,
-        "confirmed_original": finding is not None and finding["verification"] == "confirmed",
+        "confirmed_original": finding is not None
+        and decode_verification(finding["verification"]) == Verification.CONFIRMED,
         "attempts": report["attempts"],
         "useful": report["useful"],
         "rejected": report["rejected"],
@@ -143,10 +158,10 @@ def _run_mode(
         "adapter_ns": report["adapter_ns"],
         "dispatch_roundtrip_ns": report["dispatch_roundtrip_ns"],
         "counts_scope": "ordinary oracle calls including replay/shrink"
-        if mode == "hypothesis"
+        if mode == BenchmarkMode.HYPOTHESIS
         else "search cases excluding verification/shrink",
         "adapter_scope": "inner oracle and monitor, excludes generation"
-        if mode == "hypothesis"
+        if mode == BenchmarkMode.HYPOTHESIS
         else "bridge including draws and monitor",
     }
 
@@ -166,9 +181,9 @@ def run(output: Path, seed: int, budget_seconds: float) -> Path:
         sources[f"sources/{relative}"] = _digest(destination)
     versions = _versions()
     runs = []
-    for target in ("branching", "stateful"):
+    for target in ComparisonTarget:
         # Rotate comparison order deterministically rather than always favoring guided first.
-        modes = ("guided", "unguided", "hypothesis")
+        modes = tuple(BenchmarkMode)
         rotation = seed % len(modes)
         runs.extend(
             _run_mode(output, target, mode, seed, budget_seconds)
@@ -241,12 +256,15 @@ def summarize(output: Path) -> Path:
     ):
         message = "native seed observations do not share provenance"
         raise ValueError(message)
-    probes = cast("dict[str, str]", first["probes"])
-    guided = [row for row in rows if row["mode"] == "guided"]
-    passed = all(status == "passed" for status in probes.values()) and all(
+    probes = {
+        name: ProbeStatus(status)
+        for name, status in cast("dict[str, object]", first["probes"]).items()
+    }
+    guided = [row for row in rows if BenchmarkMode(row["mode"]) == BenchmarkMode.GUIDED]
+    passed = all(status == ProbeStatus.PASSED for status in probes.values()) and all(
         row["confirmed_original"] and cast("int", row["corpus_entries"]) > 1 for row in guided
     )
-    failed = any(status == "failed" for status in probes.values()) or any(
+    failed = any(status == ProbeStatus.FAILED for status in probes.values()) or any(
         row["exit_code"] == INFRASTRUCTURE_EXIT for row in rows
     )
     result = {
@@ -256,7 +274,11 @@ def summarize(output: Path) -> Path:
         "versions": first["versions"],
         "sources": first["sources"],
         "probes": probes,
-        "status": "failed" if failed else "passed" if passed else "partial",
+        "status": SummaryStatus.FAILED
+        if failed
+        else SummaryStatus.PASSED
+        if passed
+        else SummaryStatus.PARTIAL,
         "observed_seeds": list(range(5)),
         "budget_seconds": BUDGET_SECONDS,
         "raw_evidence_sha256": evidence_hashes,

@@ -21,25 +21,26 @@ def scopes(tmp_path: Path) -> Iterator[Path]:
     target.write_text("""
 import pytest
 from adapter import FIXTURE_EVENTS
+from model import PytestPhase
 from hypothesis import given, strategies as st, assume, settings, HealthCheck
 
 @pytest.fixture(scope="session")
 def session(request):
-    request.config.stash[FIXTURE_EVENTS].append(("session", "setup"))
+    request.config.stash[FIXTURE_EVENTS].append(("session", PytestPhase.SETUP))
     yield object()
-    request.config.stash[FIXTURE_EVENTS].append(("session", "teardown"))
+    request.config.stash[FIXTURE_EVENTS].append(("session", PytestPhase.TEARDOWN))
 
 @pytest.fixture(scope="module")
 def module(request, session):
-    request.config.stash[FIXTURE_EVENTS].append(("module", "setup"))
+    request.config.stash[FIXTURE_EVENTS].append(("module", PytestPhase.SETUP))
     yield object()
-    request.config.stash[FIXTURE_EVENTS].append(("module", "teardown"))
+    request.config.stash[FIXTURE_EVENTS].append(("module", PytestPhase.TEARDOWN))
 
 @pytest.fixture
 def value(request, module):
-    request.config.stash[FIXTURE_EVENTS].append(("function", "setup"))
+    request.config.stash[FIXTURE_EVENTS].append(("function", PytestPhase.SETUP))
     yield []
-    request.config.stash[FIXTURE_EVENTS].append(("function", "teardown"))
+    request.config.stash[FIXTURE_EVENTS].append(("function", PytestPhase.TEARDOWN))
 
 @pytest.mark.parametrize("tag", ["a", "b"])
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])

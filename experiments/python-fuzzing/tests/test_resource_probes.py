@@ -9,11 +9,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from unittest.mock import patch
 
 import pytest
 from test_controller import BINARY
 from test_controller import probe_run as probe_run  # noqa: PLC0414 -- shared pytest fixture
 from test_controller import process_project as process_project  # noqa: PLC0414 -- shared pytest fixture
+
+from model import ResourceBackend
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -76,48 +79,70 @@ def test_allocate(value):
 
 
 def _capabilities(report: Report) -> dict[str, object]:
-    return cast("dict[str, object]", cast("dict[str, object]", report)["capabilities"])
+    capabilities = cast("dict[str, object]", cast("dict[str, object]", report)["capabilities"])
+    return {**capabilities, "backend": ResourceBackend(capabilities["backend"])}
 
 
+@pytest.fixture
+def hard_capabilities(probe_run: Callable[..., tuple[int, Report]]) -> dict[str, object]:
+    """Require a real hard backend before executing a hard-enforcement scenario."""
+    _, report = probe_run(("ok",))
+    capabilities = _capabilities(report)
+    if not capabilities["tree_memory_hard"]:
+        pytest.skip("native delegated cgroup/Job Object unavailable; hard gate remains unverified")
+    return capabilities
+
+
+@pytest.mark.usefixtures("hard_capabilities")
+def test_hard_cap_allows_attached_target(
+    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+) -> None:
+    """A native capable host admits the target with hard enforcement required."""
+    code, _ = probe_run(("marker",), allow_best_effort=False)
+    assert code == 0
+    assert (process_project / "target-started.txt").exists()
+
+
+@pytest.mark.usefixtures("portable_capabilities")
 def test_unavailable_hard_cap_refuses_before_target(
     probe_run: Callable[..., tuple[int, Report]], process_project: Path
 ) -> None:
-    """Default refusal must happen before collection or any target execution."""
+    """Default refusal happens before collection or target execution on fallback hosts."""
     code, report = probe_run(("marker",), allow_best_effort=False)
-    if _capabilities(report)["tree_memory_hard"]:
-        assert code == 0
-        assert (process_project / "target-started.txt").exists()
-    else:
-        assert code == INFRASTRUCTURE_EXIT
-        assert not (process_project / "target-started.txt").exists()
-        assert report["outcomes"][0]["kind"] == "infrastructure"
+    assert code == INFRASTRUCTURE_EXIT
+    assert not (process_project / "target-started.txt").exists()
+    assert report["outcomes"][0]["kind"] == "infrastructure"
 
 
-def test_fallback_is_explicit_about_containment(
-    probe_run: Callable[..., tuple[int, Report]],
-) -> None:
-    """A portable process group is weaker than whole-tree containment."""
+@pytest.fixture
+def portable_capabilities(probe_run: Callable[..., tuple[int, Report]]) -> dict[str, object]:
+    """Observe the portable contract only on a host selecting that backend."""
     code, report = probe_run(("ok",))
     assert code == 0
-    caps = _capabilities(report)
-    if caps["backend"] == "portable":
-        assert caps["tree_memory_hard"] is False
-        assert caps["tree_cleanup"] is False
-        assert caps["reason"]
+    capabilities = _capabilities(report)
+    if capabilities["backend"] != ResourceBackend.PORTABLE:
+        pytest.skip("native hard backend selected; portable contract needs a fallback host")
+    return capabilities
+
+
+def test_fallback_is_explicit_about_containment(portable_capabilities: dict[str, object]) -> None:
+    """A portable process group is weaker than whole-tree containment."""
+    assert portable_capabilities["tree_memory_hard"] is False
+    assert portable_capabilities["tree_cleanup"] is False
+    assert portable_capabilities["reason"]
 
 
 def test_startup_ignores_unattached_pythonpath_hooks(
     probe_run: Callable[..., tuple[int, Report]],
     process_project: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Trusted isolated bootstrap cannot run PYTHONPATH startup code before attachment."""
     hook = process_project / "early-startup.txt"
     (process_project / "sitecustomize.py").write_text(
         f"from pathlib import Path\nPath({str(hook)!r}).write_text('too early')\n"
     )
-    monkeypatch.setenv("PYTHONPATH", str(process_project))
-    code, _ = probe_run(("marker",))
+    with patch.dict(os.environ, {"PYTHONPATH": str(process_project)}):
+        code, _ = probe_run(("marker",))
     assert code == 0
     assert not hook.exists()
     assert (process_project / "target-started.txt").exists()
@@ -133,22 +158,36 @@ def test_child_is_cleaned_when_root_finishes(
     assert not (process_project / "child-finished.txt").exists()
 
 
+@pytest.fixture
+def aggregate_memory_run(
+    probe_run: Callable[..., tuple[int, Report]], hard_capabilities: dict[str, object]
+) -> tuple[int, Report]:
+    """Execute one aggregate allocation after actual capability discovery."""
+    assert hard_capabilities["tree_memory_hard"] is True
+    return probe_run(("allocate",), memory_bytes=MEMORY_LIMIT, case_ms=3000)
+
+
 def test_combined_memory_requires_backend_evidence(
-    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+    aggregate_memory_run: tuple[int, Report],
 ) -> None:
     """Only a real capable environment can establish aggregate hard enforcement."""
-    _, capabilities = probe_run(("ok",))
-    if not _capabilities(capabilities)["tree_memory_hard"]:
-        pytest.skip("native delegated cgroup/Job Object unavailable; hard gate remains unverified")
-    code, report = probe_run(("allocate",), memory_bytes=MEMORY_LIMIT, case_ms=3000)
+    code, report = aggregate_memory_run
     assert code == 1
     finding = report["outcomes"][0]
     assert finding["kind"] == "oom"
     assert json.loads(Path(finding["original"]).read_text())["input"] == [8]
-    if os.name != "nt":
-        pid = int((process_project / "child-pid.txt").read_text())
-        with pytest.raises(ProcessLookupError):
-            os.kill(pid, 0)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX child liveness assertion")
+def test_aggregate_memory_kill_removes_child(
+    aggregate_memory_run: tuple[int, Report], process_project: Path
+) -> None:
+    """The aggregate limit kills the descendant allocating beyond its allowance."""
+    code, _ = aggregate_memory_run
+    assert code == 1
+    pid = int((process_project / "child-pid.txt").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_unrelated_exit_is_not_oom(probe_run: Callable[..., tuple[int, Report]]) -> None:
@@ -170,26 +209,20 @@ def test_flood_remains_bounded_when_killed(probe_run: Callable[..., tuple[int, R
     assert all(log["truncated"] for log in report["logs"])
 
 
+@pytest.mark.usefixtures("hard_capabilities")
 def test_setup_memory_limit_is_infrastructure(
     probe_run: Callable[..., tuple[int, Report]], process_project: Path
 ) -> None:
     """A resource failure before any dispatched example cannot implicate input bytes."""
-    _, report = probe_run(("ok",))
-    if not _capabilities(report)["tree_memory_hard"]:
-        pytest.skip("native hard backend unavailable; setup-limit gate remains unverified")
     code, report = probe_run(("marker",), memory_bytes=16 * 1024 * 1024)
     assert code == INFRASTRUCTURE_EXIT
     assert not (process_project / "target-started.txt").exists()
     assert report["outcomes"][0]["original"] is None
 
 
-def test_two_trees_have_independent_allowances(
-    probe_run: Callable[..., tuple[int, Report]], process_project: Path
-) -> None:
+@pytest.mark.usefixtures("hard_capabilities")
+def test_two_trees_have_independent_allowances(process_project: Path) -> None:
     """Two independent controllers may each consume their own hard allowance."""
-    _, report = probe_run(("ok",))
-    if not _capabilities(report)["tree_memory_hard"]:
-        pytest.skip("no native hard backend; concurrent allowance gate remains unverified")
 
     def launch(index: int) -> tuple[int, dict[str, object]]:
         out = process_project / f"independent-{index}"
