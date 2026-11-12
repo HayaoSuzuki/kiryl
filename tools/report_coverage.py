@@ -251,7 +251,7 @@ def validate_inventory(rust: Metrics, python: Metrics) -> None:
     if library.is_file() and all(
         not line.strip()
         or line.lstrip().startswith("//")
-        or re.fullmatch(r"(?:pub )?mod \w+;", line.strip())
+        or re.fullmatch(r"(?:pub )?(?:mod \w+|use [\w:{}, *]+);", line.strip())
         for line in library.read_text(encoding="utf-8").splitlines()
     ):
         expected_rust.discard("src/lib.rs")

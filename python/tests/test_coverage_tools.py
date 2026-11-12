@@ -497,10 +497,18 @@ def test_native_metadata_rejects_inconsistent_snapshot(matrix: Path) -> None:
         report_coverage.report_directories(matrix)
 
 
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "fn added() {}\n",
+        "pub use resource::Capabilities;\nfn added() {}\n",
+        "pub use resource::Capabilities; fn added() {}\n",
+    ],
+)
 @pytest.mark.usefixtures("matrix")
-def test_executable_library_source_must_appear_in_report() -> None:
+def test_executable_library_source_must_appear_in_report(contents: str) -> None:
     """The module-only exception stops applying when the library gains code."""
-    (report_coverage.ROOT / "src/lib.rs").write_text("fn added() {}\n", encoding="utf-8")
+    (report_coverage.ROOT / "src/lib.rs").write_text(contents, encoding="utf-8")
     with pytest.raises(ValueError, match="src/lib\\.rs"):
         report_coverage.validate_inventory({}, {})
 
@@ -631,3 +639,14 @@ def test_llvm_function_requires_definition_region(tmp_path: Path) -> None:
     report = write_rust_function_report(tmp_path, [function], LCOV)
     with pytest.raises(ValueError, match="lacks a source definition region"):
         report_coverage.rust_function_counts([report])
+
+
+@pytest.mark.parametrize(
+    "declaration", ["pub use resource::{BackendName, Capabilities};", "use resource::Capabilities;"]
+)
+def test_library_reexports_have_no_executable_locations(matrix: Path, declaration: str) -> None:
+    """LLVM emits no counters for a file containing only item declarations."""
+    (report_coverage.ROOT / "src/lib.rs").write_text(declaration + "\n", encoding="utf-8")
+    rust = report_coverage.rust_counts([matrix / "linux-3.14/rust.lcov"])
+    python = report_coverage.python_counts([matrix / "linux-3.14/python.json"])
+    report_coverage.validate_inventory(rust, python)

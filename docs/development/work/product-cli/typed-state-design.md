@@ -90,3 +90,21 @@ campaign while retaining its 0.1-second case limit. The unchanged assertion
 passes locally; the new native run must confirm Windows behavior. Domain test
 helpers also exchange OutcomeKind instead of string labels; Rust checks pass
 after that final fixture migration.
+
+Native experiment CI then exposed an unrelated deadline coupling in the fixture
+setup test (macOS 3.14): a five-second campaign could end during fresh replay,
+leaving verification pending. Deliberately increasing setup duration reproduced
+the same pending result locally; removing only the campaign limit confirmed the
+original failure. The acceptance test now parameterizes normal and 2.5-second
+setup, retains its 150 ms case limit, and isolates the case contract from campaign
+expiry. The slow testcase failed with the old deadline (5.32 s), and both cases
+passed after the fix (9.80 s total). This changes test supervision only.
+
+All six native product cells passed at 39579e4, but the union inventory rejected
+lib.rs: its new pub-use declarations have no executable LLVM locations, while
+the old classifier recognized only module declarations. Two literal declaration
+cases reproduced the rejection before the fix. The inventory now recognizes
+single-line import/re-export declarations too; separate function, function after
+re-export, and same-line function cases all continue to require library coverage.
+All 67 coverage-tool tests pass. No executable location or test is excluded.
+The final experimental probe suite passes 184 tests with six native-only skips.

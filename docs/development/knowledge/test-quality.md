@@ -11,6 +11,10 @@ sources:
 - id: manifest
   resource: ../../../Cargo.toml
   revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+- id: inventory
+  resource: ../../../tools/report_coverage.py
+  working_tree: modified
+  sha256: 906ec9e7673946321aeb29dc25000572115f8d27b600b4443bc692c0035b01f7
 - id: mock-api
   resource: https://docs.python.org/ja/3.15/library/unittest.mock.html#unittest.mock.create_autospec
 ---
@@ -49,6 +53,11 @@ reason. Do not exclude modules, tests or ordinary reachable error paths to raise
 score. Branch/region/instantiation measures are distinct from line coverage and
 must not be claimed when only lines were measured.[^plan]
 
+The inventory requires every scoped executable source file. A Rust library
+entry point containing only module/import/re-export declarations has no LLVM
+locations; adding an executable item makes the file mandatory again. This does
+not remove executable locations from measurement.[^inventory]
+
 # Evidence and reconsideration
 
 The [test and coverage work record](../work/product-cli/test-coverage-plan.md)
@@ -61,3 +70,5 @@ coverage instrumentation, test locations or generated fixtures change.[^plan]
 [^manifest]: [Rust development dependencies](../../../Cargo.toml).
 
 [^mock-api]: [Python create_autospec and scoped patching](https://docs.python.org/ja/3.15/library/unittest.mock.html#unittest.mock.create_autospec).
+
+[^inventory]: [Exact native inventory gate](../../../tools/report_coverage.py).

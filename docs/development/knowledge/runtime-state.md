@@ -7,7 +7,7 @@ sources:
 - id: design
   resource: ../work/product-cli/typed-state-design.md
   working_tree: untracked
-  sha256: d2588f19deb8c69eed1f2b7e32f0b29b526d07bbaaeea90cd6332a33adeb5faf
+  sha256: 6048f402172e836a6e668c69adf3cb12ae33f92ce56feffdace1c630319315cb
 - id: product
   resource: ../../../src/executor.rs
   working_tree: modified

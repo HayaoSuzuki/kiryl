@@ -532,14 +532,18 @@ def test_generated_finding_replays_retained_input(
     assert derived["evidence"]["input"] == original["input"]
 
 
+@pytest.mark.parametrize("setup_seconds", [0.3, 2.5])
 def test_replay_case_budget_excludes_fixture_setup(
-    probe_run: Callable[..., tuple[int, Report]], process_project: Path
+    probe_run: Callable[..., tuple[int, Report]], process_project: Path, setup_seconds: float
 ) -> None:
     """All fresh executions reach the oracle despite setup exceeding case time."""
-    code, report = probe_run(("fast_failure",), case_ms=150, campaign_ms=5000)
+    target = process_project / "test_process.py"
+    target.write_text(target.read_text().replace("time.sleep(0.3)", f"time.sleep({setup_seconds})"))
+    # Isolate the per-case contract from an unrelated whole-campaign deadline.
+    code, report = probe_run(("fast_failure",), case_ms=150, campaign_ms=None)
     assert code == 1
     finding = report["outcomes"][0]
-    assert finding["verification"] == "confirmed"
+    assert finding["verification"] == "confirmed", report
     assert (
         len((process_project / "slow-teardown.txt").read_text().splitlines())
         >= DISCOVERY_REPLAY_SHRINK
