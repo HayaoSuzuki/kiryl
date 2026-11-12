@@ -16,7 +16,7 @@ sources:
 - id: product-campaign
   resource: ../../../src/campaign.rs
   working_tree: modified
-  sha256: b343b3089fc235d0bf59aafc4c1bff0525892a1f19ea750753432545952e418f
+  sha256: 99c1502cc758ac43ea56532cf8fb12f8667fb24881feb73ba2088a56e4c35660
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
@@ -41,6 +41,10 @@ sources:
   resource: ../../../src/verification.rs
   working_tree: modified
   sha256: c3530e563d93ae709f4b0b98129b86ab8a7e28cf3bb0eb6e938820108d4727e6
+- id: target-scheduling
+  resource: ../work/product-cli/target-scheduling-plan.md
+  working_tree: untracked
+  sha256: 9e162cebb1e64ef1aea74727b4ccc222e351748fd74d489724bdb4123db305f6
 - id: presentation-policy
   resource: ../work/product-cli/presentation-policy-plan.md
   working_tree: untracked
@@ -290,3 +294,18 @@ option is implemented; do not reintroduce display-key configuration lookups.
 [^presentation-policy][^product-command][^product-report]
 
 [^presentation-policy]: [Typed presentation policy design and verification](../work/product-cli/presentation-policy-plan.md).
+
+Campaign target rows own cumulative exploration debt and scheduling eligibility.
+Recording a slice saturating-adds max(exploration_ms, 1), preserves the bounded
+latest snapshot and derives eligibility from typed target status. The campaign
+reads the same debt for selection and deterministic seed offsets; it no longer
+maintains parallel mutable charge/stop arrays. Replay and shrinking never create
+exploration debt. Error snapshots preserve accumulated counters and charge.
+The typed scheduler and public pure selector share one stable least-charge
+primitive. Generated typed/public correspondence connects representations, while
+literal tests, Lean cases and fuzz invariants independently constrain selection.
+Revisit this ownership when a real new target state or charging rule is introduced;
+keep one stored source of truth and the existing report/CLI contract.
+[^target-scheduling][^product-campaign]
+
+[^target-scheduling]: [Target-owned scheduling design and verification](../work/product-cli/target-scheduling-plan.md).

@@ -2,7 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|bytes: &[u8]| {
-    // Equal-length slices are the campaign caller's invariant; cap allocation.
+    // Exercise the pure selector adapter with bounded explicit schedule states.
     let entries: Vec<_> = bytes.chunks_exact(17).take(256).collect();
     let charges: Vec<u128> = entries
         .iter()
