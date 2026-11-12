@@ -72,9 +72,10 @@ def lifecycle():
 @pytest.fixture
 def blocked_receive():
     import worker
+    time.sleep(1)
     original = worker.receive
     def blocked(stream):
-        time.sleep(2)
+        time.sleep(60)
         return {}
     worker.receive = blocked
     yield
@@ -449,7 +450,9 @@ def test_blocked_input_writer_cannot_hide_campaign_deadline(
 ) -> None:
     """A real worker can request input then stop reading; parent deadlines still apply."""
     supplied = b"x" * 65536
-    code, report = probe_run(("blocked_input",), inputs=(supplied,), campaign_ms=700)
+    code, report = probe_run(
+        ("blocked_input",), inputs=(supplied,), campaign_ms=8000, case_ms=20000
+    )
     assert code == 1
     outcome = report["outcomes"][0]
     assert outcome["kind"] == "campaign_cancelled"

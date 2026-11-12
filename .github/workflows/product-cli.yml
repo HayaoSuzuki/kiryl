@@ -68,7 +68,7 @@ jobs:
         run: |
           product_python=$(uv run --project python --frozen --no-sync python -c 'import sys; print(sys.executable)')
           if [[ "$RUNNER_OS" == Linux ]]; then
-            tools/with-delegated-cgroup.sh "$product_python" tools/run_coverage.py --python "$product_python"
+            tools/with-delegated-cgroup.sh env RUST_TEST_THREADS=1 "$product_python" tools/run_coverage.py --python "$product_python"
           else
             "$product_python" tools/run_coverage.py --python "$product_python"
           fi

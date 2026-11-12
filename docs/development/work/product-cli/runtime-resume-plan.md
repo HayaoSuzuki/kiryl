@@ -106,3 +106,22 @@ fixtures and public runtime results. Require all current native jobs, including
 the six actual pytest 9.1.1 compatibility phases, and the exact default-profile
 coverage union. The completion ledger and named-revision PR checks own final
 acceptance; this pre-publication checkpoint is not an invented native result.
+
+## Native harness reliability follow-up
+
+At 023e63e, parallel delegated coverage failed before a native fixture's protocol
+started: launching its freshly written executable returned ExecutableFileBusy.
+The normal Rust phase at the same revision passed. Delegated Linux coverage now
+runs Rust harness cases with RUST_TEST_THREADS=1, reducing interference between
+mutable launcher fixtures. Every case, including delegated ignored cases and
+explicit within-scenario process concurrency, remains in measurement scope.
+No retry, ignored case or coverage exclusion is added.
+
+A separate experimental blocked-writer check used a 700 ms campaign limit, which
+could expire during Windows startup before any active input existed. A controlled
+one-second fixture setup reproduced the missing-original failure locally. Its
+campaign window is now eight seconds, below a twenty-second case limit, while
+the artificial blocked receive lasts sixty seconds. The unchanged exact-buffer
+assertion passes after the fix (8.15 s locally). The external fifteen-second
+subprocess watchdog still detects an indefinitely blocked parent. These changes
+adjust test preconditions, not product deadline or storage policy.

@@ -44,15 +44,19 @@ sources:
 - id: runtime-resume
   resource: ../work/product-cli/runtime-resume-plan.md
   working_tree: untracked
-  sha256: 739b8ab5b329f1c344c041cf72ca4cd992dc82f45ac2eaf1e9c0cf77fb05028a
+  sha256: c49f01c2de6787421dd59a030a189830c6246a0ca33bc4eaaa91ea41f3a625fc
 - id: runtime-admission
   resource: ../../../python/kiryl_adapter/runtime.py
   working_tree: modified
   sha256: 6caba443e38f7477f51673ea378677721585325b62d7b9daef60870fe0ddbdc7
+- id: runtime-probes
+  resource: ../../../experiments/python-fuzzing/tests/test_controller.py
+  working_tree: modified
+  sha256: f2208af78566ee35cf1218d58dc0387897331dbda01fe08a837b00d80d00a711
 - id: runtime-matrix
   resource: ../../../.github/workflows/product-cli.yml
   working_tree: modified
-  sha256: d8770e20908553a7efec2a81d0a67fa930a0cda167a35fb61af6ff2f98d41fec
+  sha256: 0b008ef7ba70fc4b9df5cf127d8fe048a009956d3b28eaff9ad710269c56c9f8
 - id: target-scheduling
   resource: ../work/product-cli/target-scheduling-plan.md
   working_tree: untracked
@@ -342,3 +346,14 @@ compatibility rules change.[^runtime-resume][^product-campaign]
 [^runtime-resume]: [Runtime compatibility and deterministic resume plan](../work/product-cli/runtime-resume-plan.md).
 [^runtime-admission]: [Explicit runtime admission](../../../python/kiryl_adapter/runtime.py).
 [^runtime-matrix]: [Native product and compatibility workflow](../../../.github/workflows/product-cli.yml).
+
+Delegated native coverage runs all Rust harness cases sequentially to avoid
+interference between mutable executable fixtures; explicit concurrent-process
+scenarios and ignored native fault cases still execute. The experimental
+blocked-writer check gives startup a separate practical margin and keeps the
+case deadline above the campaign deadline, so it actually verifies cancellation
+of admitted input rather than cancellation before admission. These are test
+execution constraints, not weaker supervision or coverage requirements.
+[^runtime-resume][^runtime-matrix][^runtime-probes]
+
+[^runtime-probes]: [Authored controller probes](../../../experiments/python-fuzzing/tests/test_controller.py).
