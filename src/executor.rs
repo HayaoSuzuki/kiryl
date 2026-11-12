@@ -2261,13 +2261,13 @@ mod tests {
         );
     }
     #[cfg(unix)]
-    fn replay_frames(kind: &str, fingerprint: &str) -> Vec<Value> {
+    fn replay_frames(kind: Option<OutcomeKind>, fingerprint: &str) -> Vec<Value> {
         let mut frames = vec![json!({"kind":"ready","environment":{}})];
         match kind {
-            "none" => (),
-            "skip" => frames.push(json!({"kind":"skipped","observation":{"nodeid":"test"}})),
-            "infrastructure" => frames.push(json!({"kind":"error","message":"verification unavailable"})),
-            _ => frames.extend([
+            None => (),
+            Some(OutcomeKind::Skip) => frames.push(json!({"kind":"skipped","observation":{"nodeid":"test"}})),
+            Some(OutcomeKind::Infrastructure) => frames.push(json!({"kind":"error","message":"verification unavailable"})),
+            Some(kind) => frames.extend([
                 json!({"kind":"replay_case","test_id":"test"}),
                 json!({"kind":"result","case_id":0,"observation":{"nodeid":"test","kind":kind,"fingerprint":fingerprint}}),
             ]),
@@ -2300,20 +2300,20 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case::confirmed("failure", "same", "confirmed")]
-    #[case::different_assertion("failure", "different", "unstable")]
-    #[case::passing("pass", "same", "unstable")]
-    #[case::skipped("skip", "same", "unstable")]
-    #[case::infrastructure("infrastructure", "same", "pending")]
-    #[case::incomplete("none", "same", "pending")]
+    #[case::confirmed(Some(OutcomeKind::Failure), "same", "confirmed")]
+    #[case::different_assertion(Some(OutcomeKind::Failure), "different", "unstable")]
+    #[case::passing(Some(OutcomeKind::Pass), "same", "unstable")]
+    #[case::skipped(Some(OutcomeKind::Skip), "same", "unstable")]
+    #[case::infrastructure(Some(OutcomeKind::Infrastructure), "same", "pending")]
+    #[case::incomplete(None, "same", "pending")]
     fn exploration_preserves_pending_and_checked_shrink_evidence(
-        #[case] kind: &str,
+        #[case] kind: Option<OutcomeKind>,
         #[case] fingerprint: &str,
         #[case] expected: &str,
     ) {
         let fixture = SessionFixture::sequenced(&[
             initial_failure_frames(),
-            replay_frames("failure", "same"),
+            replay_frames(Some(OutcomeKind::Failure), "same"),
             shrink_frames(&json!([8])),
             replay_frames(kind, fingerprint),
         ]);
@@ -2340,16 +2340,17 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case::matching("failure", "same", "confirmed")]
-    #[case::mismatched("failure", "different", "unstable")]
-    #[case::passing("pass", "same", "unstable")]
-    #[case::skipped("skip", "same", "unstable")]
-    #[case::infrastructure("infrastructure", "same", "pending")]
-    #[case::incomplete("none", "same", "pending")]
+    #[case::matching(Some(OutcomeKind::Failure), "same", Verdict::Confirmed, "confirmed")]
+    #[case::mismatched(Some(OutcomeKind::Failure), "different", Verdict::Unstable, "unstable")]
+    #[case::passing(Some(OutcomeKind::Pass), "same", Verdict::Unstable, "unstable")]
+    #[case::skipped(Some(OutcomeKind::Skip), "same", Verdict::Unstable, "unstable")]
+    #[case::infrastructure(Some(OutcomeKind::Infrastructure), "same", Verdict::Pending, "pending")]
+    #[case::incomplete(None, "same", Verdict::Pending, "pending")]
     fn standalone_minimization_checks_candidate_in_fresh_session(
-        #[case] kind: &str,
+        #[case] kind: Option<OutcomeKind>,
         #[case] fingerprint: &str,
-        #[case] expected: &str,
+        #[case] expected: Verdict,
+        #[case] expected_label: &str,
     ) {
         let fixture = SessionFixture::sequenced(&[
             shrink_frames(&json!([8])),
@@ -2379,7 +2380,7 @@ mod tests {
         );
         assert_eq!(
             persisted_evidence(&outcome.derived[1])["verification"],
-            expected
+            expected_label
         );
         assert_eq!(std::fs::read(&original).unwrap(), before);
     }
@@ -2452,13 +2453,13 @@ mod tests {
     }
     #[rstest::rstest]
     #[case::no_oom(Ok(false), true, None)]
-    #[case::observed_oom(Ok(true), true, Some(("oom", "pending", None)))]
-    #[case::unavailable_evidence(Err(io::Error::new(io::ErrorKind::PermissionDenied, "resource denied")), true, Some(("infrastructure", "pending", Some("resource evidence: resource denied"))))]
-    #[case::oom_before_case(Ok(true), false, Some(("infrastructure", "pending", None)))]
+    #[case::observed_oom(Ok(true), true, Some((OutcomeKind::Oom, Verdict::Pending, None)))]
+    #[case::unavailable_evidence(Err(io::Error::new(io::ErrorKind::PermissionDenied, "resource denied")), true, Some((OutcomeKind::Infrastructure, Verdict::Pending, Some("resource evidence: resource denied"))))]
+    #[case::oom_before_case(Ok(true), false, Some((OutcomeKind::Infrastructure, Verdict::Pending, None)))]
     fn resource_evidence_policy_preserves_classification(
         #[case] evidence: io::Result<bool>,
         #[case] active: bool,
-        #[case] expected: Option<(&str, &str, Option<&str>)>,
+        #[case] expected: Option<(OutcomeKind, Verdict, Option<&str>)>,
     ) {
         let actual = resource_observation(evidence, active).map(|observation| {
             (
@@ -2468,11 +2469,7 @@ mod tests {
             )
         });
         let expected = expected.map(|(kind, verification, rendered)| {
-            (
-                kind.into(),
-                verification.into(),
-                rendered.map(str::to_owned),
-            )
+            (kind, verification.into(), rendered.map(str::to_owned))
         });
         assert_eq!(actual, expected);
     }
@@ -2609,11 +2606,11 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case::matching(1, "skip", None)]
-    #[case::mismatched(2, "infrastructure", Some(vec![4,2]))]
+    #[case::matching(1, OutcomeKind::Skip, None)]
+    #[case::mismatched(2, OutcomeKind::Infrastructure, Some(vec![4,2]))]
     fn active_skip_must_correlate_with_the_admitted_case(
         #[case] case_id: u64,
-        #[case] kind: &str,
+        #[case] kind: OutcomeKind,
         #[case] retained: Option<Vec<u8>>,
     ) {
         let fixture = SessionFixture::new(&[
@@ -2624,7 +2621,7 @@ mod tests {
         ]);
         let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
-        assert_eq!(observation.kind, kind.into(), "{observation:?}");
+        assert_eq!(observation.kind, kind, "{observation:?}");
         assert_eq!(result.retained_input, retained);
         assert_eq!(result.original.is_some(), retained.is_some());
     }
@@ -2715,7 +2712,7 @@ mod tests {
     fn automatic_minimization_malformed_candidate_preserves_confirmed_original() {
         let fixture = SessionFixture::sequenced(&[
             initial_failure_frames(),
-            replay_frames("failure", "same"),
+            replay_frames(Some(OutcomeKind::Failure), "same"),
             unsuccessful_shrink_frames(&json!("invalid")),
         ]);
         let error = Executor::new(Arc::new(AtomicBool::new(false)))
@@ -2749,16 +2746,16 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case::different_assertion("failure", "different", "unstable", 1)]
-    #[case::passing("pass", "same", "unstable", 1)]
-    #[case::skipped("skip", "same", "unstable", 1)]
-    #[case::rejected("reject", "same", "unstable", 1)]
-    #[case::infrastructure("infrastructure", "same", "pending", 1)]
-    #[case::incomplete("none", "same", "pending", 0)]
+    #[case::different_assertion(Some(OutcomeKind::Failure), "different", Verdict::Unstable, 1)]
+    #[case::passing(Some(OutcomeKind::Pass), "same", Verdict::Unstable, 1)]
+    #[case::skipped(Some(OutcomeKind::Skip), "same", Verdict::Unstable, 1)]
+    #[case::rejected(Some(OutcomeKind::Reject), "same", Verdict::Unstable, 1)]
+    #[case::infrastructure(Some(OutcomeKind::Infrastructure), "same", Verdict::Pending, 1)]
+    #[case::incomplete(None, "same", Verdict::Pending, 0)]
     fn unsuccessful_initial_verification_never_starts_minimization(
-        #[case] kind: &str,
+        #[case] kind: Option<OutcomeKind>,
         #[case] fingerprint: &str,
-        #[case] expected: &str,
+        #[case] expected: Verdict,
         #[case] evidence_count: usize,
     ) {
         let fixture = SessionFixture::sequenced(&[
@@ -2787,7 +2784,7 @@ mod tests {
     fn automatic_unfinished_shrink_keeps_active_token_without_fresh_replay() {
         let fixture = SessionFixture::sequenced(&[
             initial_failure_frames(),
-            replay_frames("failure", "same"),
+            replay_frames(Some(OutcomeKind::Failure), "same"),
             unsuccessful_shrink_frames(&json!([8])),
         ]);
         let report = Executor::new(Arc::new(AtomicBool::new(false)))
@@ -3071,21 +3068,21 @@ mod tests {
         }
     }
     #[rstest::rstest]
-    #[case::pass("pass", false, Some("pass"))]
-    #[case::reject("reject", false, Some("reject"))]
-    #[case::failure("failure", false, Some("failure"))]
-    #[case::oom("oom", false, Some("oom"))]
-    #[case::unknown("unknown", false, None)]
-    #[case::oom_overrides_pass("pass", true, Some("oom"))]
-    #[case::oom_overrides_failure("failure", true, Some("oom"))]
-    #[case::oom_overrides_unknown("unknown", true, Some("oom"))]
+    #[case::pass(OutcomeKind::Pass, false, Some(OutcomeKind::Pass))]
+    #[case::reject(OutcomeKind::Reject, false, Some(OutcomeKind::Reject))]
+    #[case::failure(OutcomeKind::Failure, false, Some(OutcomeKind::Failure))]
+    #[case::oom(OutcomeKind::Oom, false, Some(OutcomeKind::Oom))]
+    #[case::unknown(OutcomeKind::Other("unknown".into()), false, None)]
+    #[case::oom_overrides_pass(OutcomeKind::Pass, true, Some(OutcomeKind::Oom))]
+    #[case::oom_overrides_failure(OutcomeKind::Failure, true, Some(OutcomeKind::Oom))]
+    #[case::oom_overrides_unknown(OutcomeKind::Other("unknown".into()), true, Some(OutcomeKind::Oom))]
     fn observed_result_admission_preserves_diagnostics(
-        #[case] kind: &str,
+        #[case] kind: OutcomeKind,
         #[case] oom: bool,
-        #[case] expected: Option<&str>,
+        #[case] expected: Option<OutcomeKind>,
     ) {
         let observation = Observation {
-            kind: kind.into(),
+            kind,
             rendered: Some("detail".into()),
             fingerprint: Some("identity".into()),
             replay_token: Some(vec![2, 7]),
@@ -3101,7 +3098,7 @@ mod tests {
         });
         let expected = expected.map(|kind| {
             (
-                kind.into(),
+                kind,
                 Some("detail".into()),
                 Some("identity".into()),
                 Some(vec![2, 7]),
