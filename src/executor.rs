@@ -79,11 +79,35 @@ pub(crate) enum Reproduction {
     Minimize,
 }
 impl Reproduction {
-    fn wire_mode(self) -> &'static str {
+    fn report_mode(self) -> &'static str {
         match self {
             Self::Replay => "replay",
             Self::Minimize => "minimize",
         }
+    }
+}
+
+/// One admitted session operation. Semantic replay/minimization always carry
+/// their opaque token, including a valid empty token. Raw replay reuses run's
+/// worker protocol, but the supervisor dispatches only the retained input once.
+#[derive(Clone, Copy, Debug)]
+enum SessionOperation<'a> {
+    Explore,
+    Replay(&'a [u8]),
+    Minimize(&'a [u8]),
+    RawReplay,
+}
+impl SessionOperation<'_> {
+    /// Encode the adapter start contract here so callers need no wire-mode or
+    /// token-nullability knowledge. This does not authorize target execution.
+    fn start(self, selection: &[String], test_id: &str, budget_seconds: f64) -> Value {
+        let (mode, token) = match self {
+            Self::Explore | Self::RawReplay => ("run", None),
+            Self::Replay(token) => ("replay", Some(token)),
+            Self::Minimize(token) => ("minimize", Some(token)),
+        };
+        json!({"kind":"start","pytest_args":selection,"test_id":test_id,
+            "mode":mode,"token":token,"budget_seconds":budget_seconds})
     }
 }
 
@@ -404,8 +428,7 @@ impl Executor {
         let result = self.session(
             &config,
             invocation,
-            "run",
-            None,
+            SessionOperation::Explore,
             start,
             &mut store,
             &mut report,
@@ -425,8 +448,7 @@ impl Executor {
                 let verified = self.session(
                     &config,
                     invocation,
-                    "replay",
-                    Some(token),
+                    SessionOperation::Replay(token),
                     start,
                     &mut store,
                     &mut report,
@@ -447,8 +469,7 @@ impl Executor {
                     let shrunk = self.session(
                         &config,
                         invocation,
-                        "minimize",
-                        Some(token),
+                        SessionOperation::Minimize(token),
                         start,
                         &mut store,
                         &mut report,
@@ -467,8 +488,7 @@ impl Executor {
                             let checked = self.session(
                                 &config,
                                 invocation,
-                                "replay",
-                                Some(&candidate),
+                                SessionOperation::Replay(&candidate),
                                 start,
                                 &mut store,
                                 &mut report,
@@ -499,8 +519,7 @@ impl Executor {
                 let verification = self.session(
                     &config,
                     &replay_invocation,
-                    "raw_replay",
-                    None,
+                    SessionOperation::RawReplay,
                     start,
                     &mut store,
                     &mut report,
@@ -537,7 +556,6 @@ impl Executor {
         original: &str,
         mode: Reproduction,
     ) -> Result<ExecutionReport, ExecutionError> {
-        let mode = mode.wire_mode();
         let mut store = ArtifactStore::open_matching(&config.output, &config.identity)
             .map_err(ExecutionError::Storage)?;
         let source = store
@@ -547,23 +565,24 @@ impl Executor {
             test_id: source.test_id.clone(),
             raw_input: None,
         };
-        let token = source.observation.replay_token.clone();
-        let operation = if token.is_none() {
-            if mode == "minimize" {
+        let operation = match (mode, source.observation.replay_token.as_deref()) {
+            (Reproduction::Replay, Some(token)) => SessionOperation::Replay(token),
+            (Reproduction::Minimize, Some(token)) => SessionOperation::Minimize(token),
+            (Reproduction::Minimize, None) => {
                 return Err(io::Error::other(
                     "semantic minimization unavailable for a raw crash/timeout",
                 )
                 .into());
             }
-            invocation.raw_input = Some(source.input.clone());
-            "raw_replay"
-        } else {
-            mode
+            (Reproduction::Replay, None) => {
+                invocation.raw_input = Some(source.input.clone());
+                SessionOperation::RawReplay
+            }
         };
 
         let mut report = ExecutionReport {
             version: 1,
-            mode: mode.into(),
+            mode: mode.report_mode().into(),
             ..ExecutionReport::default()
         };
         let start = Instant::now();
@@ -571,7 +590,6 @@ impl Executor {
             config,
             &invocation,
             operation,
-            token.as_ref(),
             start,
             &mut store,
             &mut report,
@@ -587,7 +605,7 @@ impl Executor {
                 store
                     .derived(
                         original,
-                        &json!({"mode":mode,"observation":observation,"verification":verification}),
+                        &json!({"mode":mode.report_mode(),"observation":observation,"verification":verification}),
                     )
                     .map_err(ExecutionError::Storage)?,
             );
@@ -599,7 +617,7 @@ impl Executor {
                     .derived(original, &evidence)
                     .map_err(ExecutionError::Storage)?,
             );
-            if mode == "minimize"
+            if matches!(mode, Reproduction::Minimize)
                 && evidence.get("token").is_some()
                 && !self.cancelled(config, start)
             {
@@ -608,8 +626,7 @@ impl Executor {
                 let checked = self.session(
                     config,
                     &invocation,
-                    "replay",
-                    Some(&candidate),
+                    SessionOperation::Replay(&candidate),
                     start,
                     &mut store,
                     &mut report,
@@ -652,12 +669,13 @@ impl Executor {
                 .is_some_and(|m| start.elapsed() >= Duration::from_millis(m))
     }
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one transport state machine, reviewed as a unit
+    /// Supervise one typed operation, preserving active input before acknowledging
+    /// execution and consuming worker cleanup authority before returning evidence.
     fn session(
         &self,
         config: &ExecutionSettings,
         invocation: &Invocation,
-        mode: &str,
-        token: Option<&Vec<u8>>,
+        mode: SessionOperation<'_>,
         campaign_start: Instant,
         store: &mut ArtifactStore,
         report: &mut ExecutionReport,
@@ -737,8 +755,8 @@ impl Executor {
                 }
                 Ok(Ok(Some(message))) => {
                     let kind = message["kind"].as_str().unwrap_or("");
-                    match kind {
-                        "ready" if !ready => {
+                    match (kind, mode) {
+                        ("ready", _) if !ready => {
                             ready = true;
                             let environment = message["environment"].clone();
                             if report.environment.is_null() {
@@ -755,13 +773,14 @@ impl Executor {
                                     .as_secs_f64()
                                 },
                             );
-                            worker.enqueue(json!({"kind": "start", "pytest_args": config.pytest_args, "test_id": invocation.test_id,
-                                "mode": if mode == "raw_replay" { "run" } else { mode }, "token": token, "budget_seconds": budget}));
+                            worker.enqueue(mode.start(
+                                &config.pytest_args,
+                                &invocation.test_id,
+                                budget,
+                            ));
                         }
-                        "next"
-                            if ready
-                                && ["run", "raw_replay"].contains(&mode)
-                                && active.is_none() =>
+                        ("next", SessionOperation::Explore | SessionOperation::RawReplay)
+                            if ready && active.is_none() =>
                         {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
                                 observed = Some(infrastructure("test ID mismatch"));
@@ -770,7 +789,7 @@ impl Executor {
                             if slice_start.get_or_insert_with(Instant::now).elapsed()
                                 >= Duration::from_millis(config.limits.slice_ms)
                                 || observed.is_some()
-                                || (mode == "raw_replay" && raw_dispatched)
+                                || (matches!(mode, SessionOperation::RawReplay) && raw_dispatched)
                             {
                                 worker.enqueue(json!({"kind": "end"}));
                             } else {
@@ -778,10 +797,14 @@ impl Executor {
                                     || invocation.raw_input.clone().unwrap_or_default(),
                                     Search::next_case,
                                 );
-                                if mode == "run" {
+                                if matches!(mode, SessionOperation::Explore) {
                                     report.attempts += 1;
                                 }
-                                let id = if mode == "run" { report.attempts } else { 0 };
+                                let id = if matches!(mode, SessionOperation::Explore) {
+                                    report.attempts
+                                } else {
+                                    0
+                                };
                                 active = Some((id, input.clone(), Instant::now()));
                                 raw_dispatched = true;
                                 worker.enqueue(
@@ -789,15 +812,17 @@ impl Executor {
                                 );
                             }
                         }
-                        "replay_case" if ready && mode == "replay" && active.is_none() => {
+                        ("replay_case", SessionOperation::Replay(token))
+                            if ready && active.is_none() =>
+                        {
                             if message["test_id"].as_str() != Some(&invocation.test_id) {
                                 observed = Some(infrastructure("replay test ID mismatch"));
                                 break;
                             }
-                            active = Some((0, token.cloned().unwrap_or_default(), Instant::now()));
+                            active = Some((0, token.to_vec(), Instant::now()));
                             worker.enqueue(json!({"kind": "ack"}));
                         }
-                        "skipped" if ready => {
+                        ("skipped", _) if ready => {
                             if message["observation"]["nodeid"].as_str()
                                 != Some(&invocation.test_id)
                                 || active.as_ref().is_some_and(|(id, _, _)| {
@@ -813,7 +838,7 @@ impl Executor {
                                 verification: "unstable".into(),
                                 ..Observation::default()
                             });
-                            if mode == "run" {
+                            if matches!(mode, SessionOperation::Explore) {
                                 report.outcomes.push(Outcome {
                                     test_id: invocation.test_id.clone(),
                                     case_id: 0,
@@ -826,7 +851,12 @@ impl Executor {
                             }
                             worker.enqueue(json!({"kind": "ack"}));
                         }
-                        "result" if ready && mode != "minimize" => {
+                        (
+                            "result",
+                            SessionOperation::Explore
+                            | SessionOperation::Replay(_)
+                            | SessionOperation::RawReplay,
+                        ) if ready => {
                             let Some((id, input, case_start)) = active.as_ref() else {
                                 observed = Some(infrastructure("result without active case"));
                                 break;
@@ -850,7 +880,7 @@ impl Executor {
                                 observed = Some(infrastructure("unknown observation"));
                                 break;
                             };
-                            if mode == "run" {
+                            if matches!(mode, SessionOperation::Explore) {
                                 report.adapter_ns =
                                     report.adapter_ns.saturating_add(value.elapsed_ns);
                                 report.dispatch_roundtrip_ns =
@@ -900,7 +930,7 @@ impl Executor {
                             active = None;
                             worker.enqueue(json!({"kind": "ack"}));
                         }
-                        "candidate" if ready && mode == "minimize" => {
+                        ("candidate", SessionOperation::Minimize(_)) if ready => {
                             let candidate: Vec<u8> =
                                 serde_json::from_value(message["token"].clone())
                                     .map_err(io::Error::from)?;
@@ -908,18 +938,18 @@ impl Executor {
                             active = Some((0, candidate, Instant::now()));
                             worker.enqueue(json!({"kind": "ack"}));
                         }
-                        "shrunk" if ready && mode == "minimize" => {
+                        ("shrunk", SessionOperation::Minimize(_)) if ready => {
                             // Caller owns original lineage; return a separate record for this attempt.
                             derived.push(json!({"mode": "minimize", "token": message["token"], "complete": message["complete"], "verification": "pending"}));
                             active = None;
                         }
-                        "done" if ready => {
+                        ("done", _) if ready => {
                             if active.is_some() {
                                 observed = Some(infrastructure("done with an active case"));
                             }
                             break;
                         }
-                        "error" => {
+                        ("error", _) => {
                             observed = Some(infrastructure(
                                 message["message"].as_str().unwrap_or("worker error"),
                             ));
@@ -973,7 +1003,7 @@ impl Executor {
                 Err(mpsc::RecvTimeoutError::Timeout) => (),
             }
         }
-        if mode == "run" {
+        if matches!(mode, SessionOperation::Explore) {
             report.exploration_ms = report
                 .exploration_ms
                 .saturating_add(slice_start.map_or(0, |started| started.elapsed().as_millis()));
@@ -989,14 +1019,14 @@ impl Executor {
         if let Some(value) = &observed {
             let failure = !(["pass", "reject", "skip", "failure"].contains(&value.kind.as_str())
                 || value.kind == "oom" && original.is_some());
-            if mode == "minimize"
+            if matches!(mode, SessionOperation::Minimize(_))
                 && let Some((_, candidate, _)) = &active
             {
                 derived
                     .push(json!({"mode": "minimize", "active_token": candidate, "outcome": value}));
             }
             if failure
-                && (mode == "run"
+                && (matches!(mode, SessionOperation::Explore)
                     || ["infrastructure", "campaign_cancelled", "interrupted"]
                         .contains(&value.kind.as_str()))
             {
@@ -1006,7 +1036,7 @@ impl Executor {
                         .get_or_insert(campaign_start.elapsed().as_millis());
                 }
                 let id = active.as_ref().map_or(0, |(id, _, _)| *id);
-                if mode == "run"
+                if matches!(mode, SessionOperation::Explore)
                     && let Some((_, input, _)) = active
                 {
                     original = Some(
@@ -1408,7 +1438,7 @@ mod tests {
                 ArtifactStore::open_matching(&self.config.output, &self.config.identity).unwrap();
             store.record_original("test", &[4,2], &json!({"kind":"failure","fingerprint":"same","rendered":"original","replay_token":replay_token})).unwrap()
         }
-        fn run(&self, mode: &str, report: &mut ExecutionReport) -> RunResult {
+        fn run(&self, mode: SessionOperation<'_>, report: &mut ExecutionReport) -> RunResult {
             let mut store =
                 ArtifactStore::open_matching(&self.config.output, &self.config.identity).unwrap();
             Executor::new(Arc::new(AtomicBool::new(false)))
@@ -1419,7 +1449,6 @@ mod tests {
                         raw_input: Some(vec![4, 2]),
                     },
                     mode,
-                    Some(&vec![9]),
                     Instant::now(),
                     &mut store,
                     report,
@@ -1833,19 +1862,19 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case("run", vec![json!({"kind":"next","test_id":"other"})], "test ID mismatch")]
-    #[case("replay", vec![json!({"kind":"replay_case","test_id":"other"})], "replay test ID mismatch")]
-    #[case("run", vec![json!({"kind":"skipped","observation":{"nodeid":"other"}})], "skip correlation mismatch")]
-    #[case("run", vec![json!({"kind":"result"})], "result without active case")]
-    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":99,"observation":{"nodeid":"test"}})], "case ID mismatch")]
-    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":4}})], "malformed observation")]
-    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":"unknown"}})], "unknown observation")]
-    #[case("run", vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"done"})], "done with an active case")]
-    #[case("run", vec![json!({"kind":"error","message":"injected failure"})], "injected failure")]
-    #[case("run", vec![json!({"kind":"error"})], "worker error")]
-    #[case("run", vec![json!({"kind":"unexpected"})], "unexpected control frame")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"other"})], "test ID mismatch")]
+    #[case(SessionOperation::Replay(&[9]), vec![json!({"kind":"replay_case","test_id":"other"})], "replay test ID mismatch")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"skipped","observation":{"nodeid":"other"}})], "skip correlation mismatch")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"result"})], "result without active case")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":99,"observation":{"nodeid":"test"}})], "case ID mismatch")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":4}})], "malformed observation")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"result","case_id":1,"observation":{"nodeid":"test","kind":"unknown"}})], "unknown observation")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"next","test_id":"test"}),json!({"kind":"done"})], "done with an active case")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"error","message":"injected failure"})], "injected failure")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"error"})], "worker error")]
+    #[case(SessionOperation::Explore, vec![json!({"kind":"unexpected"})], "unexpected control frame")]
     fn invalid_worker_protocol_is_infrastructure(
-        #[case] mode: &str,
+        #[case] mode: SessionOperation<'_>,
         #[case] frames: Vec<Value>,
         #[case] expected: &str,
     ) {
@@ -1864,7 +1893,7 @@ mod tests {
             environment: json!({"python":1}),
             ..ExecutionReport::default()
         };
-        let result = fixture.run("run", &mut report);
+        let result = fixture.run(SessionOperation::Explore, &mut report);
         assert_eq!(
             result.observation.unwrap().rendered.as_deref(),
             Some("worker environment changed")
@@ -1872,9 +1901,9 @@ mod tests {
     }
     #[cfg(unix)]
     #[rstest::rstest]
-    #[case("run")]
-    #[case("replay")]
-    fn correlated_skip_finishes_orderly_session(#[case] mode: &str) {
+    #[case(SessionOperation::Explore)]
+    #[case(SessionOperation::Replay(&[9]))]
+    fn correlated_skip_finishes_orderly_session(#[case] mode: SessionOperation<'_>) {
         let fixture = SessionFixture::new(&[
             json!({"kind":"ready","environment":{}}),
             json!({"kind":"skipped","observation":{"nodeid":"test"}}),
@@ -1888,7 +1917,7 @@ mod tests {
     fn missing_interpreter_is_setup_infrastructure() {
         let mut fixture = SessionFixture::new(&[]);
         fixture.config.python = fixture.root.join("missing");
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
         assert_eq!(observation.kind, "infrastructure");
         assert!(
@@ -1991,7 +2020,10 @@ mod tests {
             json!({"kind":"candidate","token":[1,2,3]}),
             json!({"kind":"error","message":"candidate interrupted"}),
         ]);
-        let result = fixture.run("minimize", &mut ExecutionReport::default());
+        let result = fixture.run(
+            SessionOperation::Minimize(&[9]),
+            &mut ExecutionReport::default(),
+        );
         assert_eq!(result.observation.unwrap().kind, "infrastructure");
         assert_eq!(result.derived[0]["active_token"], json!([1, 2, 3]));
         assert_eq!(
@@ -2008,7 +2040,10 @@ mod tests {
             json!({"kind":"result","case_id":0,"observation":{"nodeid":"test","kind":"pass"}}),
             json!({"kind":"done"}),
         ]);
-        let result = fixture.run("replay", &mut ExecutionReport::default());
+        let result = fixture.run(
+            SessionOperation::Replay(&[9]),
+            &mut ExecutionReport::default(),
+        );
         let observation = result.observation.unwrap();
         assert_eq!(observation.kind, "pass", "{observation:?}");
         assert!(result.retained_input.is_none());
@@ -2018,7 +2053,7 @@ mod tests {
     fn unavailable_worker_resource_attachment_reports_setup_error() {
         let mut fixture = SessionFixture::new(&[]);
         fixture.config.limits.allow_best_effort = false;
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         assert!(
             result
                 .observation
@@ -2047,7 +2082,7 @@ mod tests {
     fn incompatible_worker_payload_is_transport_infrastructure() {
         let fixture = SessionFixture::new(&[]);
         std::fs::write(fixture.root.join("frames"), [0, 0, 0, 2, b'[', b']']).unwrap();
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         assert_eq!(
             result.observation.unwrap().rendered.as_deref(),
             Some("incompatible frame")
@@ -2065,7 +2100,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         assert!(
             result
                 .observation
@@ -2438,7 +2473,7 @@ mod tests {
             json!({"kind":"skipped","case_id":case_id,"observation":{"nodeid":"test"}}),
             json!({"kind":"done"}),
         ]);
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
         assert_eq!(observation.kind, kind, "{observation:?}");
         assert_eq!(result.retained_input, retained);
@@ -2456,7 +2491,7 @@ mod tests {
             .unwrap()
             .replace("sleep 60\n", "exit 0\n");
         std::fs::write(&fixture.config.python, script).unwrap();
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
         assert_eq!(observation.kind, "infrastructure", "{observation:?}");
         assert_eq!(
@@ -2479,7 +2514,7 @@ mod tests {
             .unwrap()
             .replace("sleep 60\n", "exec 1>&-\nsleep 60\n");
         std::fs::write(&fixture.config.python, script).unwrap();
-        let result = fixture.run("run", &mut ExecutionReport::default());
+        let result = fixture.run(SessionOperation::Explore, &mut ExecutionReport::default());
         let observation = result.observation.unwrap();
         assert_eq!(observation.kind, "infrastructure", "{observation:?}");
         assert_eq!(
@@ -2765,7 +2800,7 @@ mod tests {
     #[case(Reproduction::Replay, "replay")]
     #[case(Reproduction::Minimize, "minimize")]
     fn reproduction_modes_are_closed(#[case] mode: Reproduction, #[case] expected: &str) {
-        assert_eq!(mode.wire_mode(), expected);
+        assert_eq!(mode.report_mode(), expected);
     }
 
     #[test]
@@ -2954,8 +2989,7 @@ mod tests {
                     test_id: "test".into(),
                     raw_input: Some(vec![255; 4096]),
                 },
-                "run",
-                None,
+                SessionOperation::Explore,
                 Instant::now(),
                 &mut store,
                 &mut report,
@@ -3001,5 +3035,29 @@ mod tests {
         .unwrap();
         assert_eq!(original["observation"]["kind"], "native_crash");
         assert!(original["observation"]["replay_token"].is_null());
+    }
+    #[rstest::rstest]
+    #[case::explore(SessionOperation::Explore, "run", json!(null))]
+    #[case::replay(SessionOperation::Replay(&[0, 255]), "replay", json!([0, 255]))]
+    #[case::minimize(SessionOperation::Minimize(&[7]), "minimize", json!([7]))]
+    #[case::raw_replay(SessionOperation::RawReplay, "run", json!(null))]
+    #[case::empty_replay(SessionOperation::Replay(&[]), "replay", json!([]))]
+    #[case::empty_minimize(SessionOperation::Minimize(&[]), "minimize", json!([]))]
+    fn session_start_preserves_operation_and_opaque_token(
+        #[case] operation: SessionOperation<'_>,
+        #[case] mode: &str,
+        #[case] token: Value,
+    ) {
+        assert_eq!(
+            operation.start(&["-k".into(), "selected".into()], "test", 1.25),
+            json!({"kind":"start","pytest_args":["-k","selected"],"test_id":"test","mode":mode,"token":token,"budget_seconds":1.25})
+        );
+    }
+    proptest::proptest! {
+        #[test]
+        fn semantic_session_start_preserves_every_token_byte(token in proptest::collection::vec(any::<u8>(), 0..4097)) {
+            let frame = SessionOperation::Replay(&token).start(&[], "test", 2.0);
+            prop_assert_eq!(&frame["token"], &json!(token));
+        }
     }
 }

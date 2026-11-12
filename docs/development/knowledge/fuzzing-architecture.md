@@ -19,7 +19,7 @@ sources:
 - id: product-executor
   resource: ../../../src/executor.rs
   working_tree: modified
-  sha256: b6cc7d8f40e13005bca423831a8092e2c67c7dbaf0760064e344cf964cffd225
+  sha256: 2733ddb6329f3c8c866b575a554a88037c0571c36496b85e580e988d54a7fa26
 - id: product-store
   resource: ../../../src/artifacts.rs
   working_tree: modified
@@ -37,6 +37,10 @@ sources:
 - id: product-verification
   resource: ../../../src/verification.rs
   revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970
+- id: session-operation
+  resource: ../work/product-cli/session-operation-design.md
+  working_tree: untracked
+  sha256: e6bcf01748be7e633bc2c3aa2bcfcf9d0baa9a938ace5382729b32c956d5ebdd
 ---
 # Selected direction
 
@@ -253,3 +257,14 @@ handles. Linux discovery parsing and attachment fallback are independently teste
 while native delegation remains a separate execution requirement. The test work
 record owns the measured revision and remaining coverage, not a blanket correctness
 claim.[^product-store][^product-executor]
+
+The private session operation couples replay/minimization with their required
+opaque token. Empty tokens remain valid; missing semantic tokens cannot be
+constructed. This boundary owns adapter start-frame encoding, while standalone
+reproduction owns its public report labels. Raw replay still uses run on the
+worker wire and dispatches its retained input once. Explicit tuple matching of
+frame and operation preserves admission and correlation without string-mode
+knowledge in callers. Reconsider the enum when a real new operation needs a
+different payload; do not add independent nullable control fields.[^session-operation][^product-executor]
+
+[^session-operation]: [Typed session operation design and verification](../work/product-cli/session-operation-design.md).
