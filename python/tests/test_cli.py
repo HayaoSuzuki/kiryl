@@ -264,7 +264,7 @@ def test_short_budget_keeps_unexecuted_target_visible(tmp_path: Path) -> None:
     project(
         tmp_path,
         "import time\nfrom hypothesis import given, strategies as st\n"
-        "@given(st.integers())\ndef test_first(n):\n    time.sleep(10)\n"
+        "@given(st.integers())\ndef test_first(n):\n    time.sleep(60)\n"
         "@given(st.integers())\ndef test_later(n):\n    pass\n",
     )
     (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = --randomly-dont-reorganize\n")
@@ -274,7 +274,7 @@ def test_short_budget_keeps_unexecuted_target_visible(tmp_path: Path) -> None:
         "test_target.py",
         "--best-effort",
         "--duration",
-        "0.7",
+        "10",
         "--store",
         str(tmp_path / "store"),
         "--report",

@@ -399,9 +399,8 @@ impl Executor {
             test_id: target.into(),
             raw_input: None,
         };
-        let mut engine = Search::new(config.seed);
-        engine.restore(store.load_corpus().map_err(ExecutionError::Storage)?);
-        let mut search = Some(engine);
+        let mut search = Search::new(config.seed);
+        search.restore(store.load_corpus().map_err(ExecutionError::Storage)?);
         let result = self.session(
             &config,
             invocation,
@@ -410,7 +409,7 @@ impl Executor {
             start,
             &mut store,
             &mut report,
-            &mut search,
+            Some(&mut search),
         )?;
         if let Some(observed) = result.observation {
             let index = report
@@ -431,7 +430,7 @@ impl Executor {
                     start,
                     &mut store,
                     &mut report,
-                    &mut None,
+                    None,
                 )?;
                 report.replay_ms += replay_start.elapsed().as_millis();
                 let verification =
@@ -453,7 +452,7 @@ impl Executor {
                         start,
                         &mut store,
                         &mut report,
-                        &mut None,
+                        None,
                     )?;
                     report.shrink_ms += shrink_start.elapsed().as_millis();
                     for mut evidence in shrunk.derived {
@@ -473,7 +472,7 @@ impl Executor {
                                 start,
                                 &mut store,
                                 &mut report,
-                                &mut None,
+                                None,
                             )?;
                             evidence["verification"] = json!(
                                 FailureIdentity::observed(&observed)
@@ -505,7 +504,7 @@ impl Executor {
                     start,
                     &mut store,
                     &mut report,
-                    &mut None,
+                    None,
                 )?;
                 let status = FailureIdentity::observed(&observed)
                     .check(verification.observation.as_ref())
@@ -519,13 +518,11 @@ impl Executor {
                 );
             }
         }
-        if let Some(search) = search {
-            store
-                .save_corpus(search.corpus())
-                .map_err(ExecutionError::Storage)?;
-            report.branches = search.feature_count();
-            report.corpus_entries = search.corpus_len();
-        }
+        store
+            .save_corpus(search.corpus())
+            .map_err(ExecutionError::Storage)?;
+        report.branches = search.feature_count();
+        report.corpus_entries = search.corpus_len();
         report.interrupted = self.interrupted.load(Ordering::Relaxed);
         report.elapsed_ms = start.elapsed().as_millis();
         Ok(report)
@@ -578,7 +575,7 @@ impl Executor {
             start,
             &mut store,
             &mut report,
-            &mut None,
+            None,
         )?;
         report.operation_observation.clone_from(&result.observation);
         let identity = FailureIdentity::saved(&source.observation);
@@ -616,7 +613,7 @@ impl Executor {
                     start,
                     &mut store,
                     &mut report,
-                    &mut None,
+                    None,
                 )?;
                 verification = FailureIdentity::semantic(source.observation.fingerprint.as_deref())
                     .check(checked.observation.as_ref())
@@ -664,7 +661,7 @@ impl Executor {
         campaign_start: Instant,
         store: &mut ArtifactStore,
         report: &mut ExecutionReport,
-        search: &mut Option<Search>,
+        mut search: Option<&mut Search>,
     ) -> Result<RunResult, ExecutionError> {
         let mut worker = match Worker::launch(config) {
             Ok(worker) => worker,
@@ -718,7 +715,9 @@ impl Executor {
             }
             if active.is_some() && resource_check.elapsed() >= Duration::from_millis(20) {
                 resource_check = Instant::now();
-                if let Some(observation) = resource_observation(worker.resource.oom_observed()) {
+                if let Some(observation) =
+                    resource_observation(worker.resource.oom_observed(), true)
+                {
                     observed = Some(observation);
                     break;
                 }
@@ -775,7 +774,7 @@ impl Executor {
                             {
                                 worker.enqueue(json!({"kind": "end"}));
                             } else {
-                                let input = search.as_mut().map_or_else(
+                                let input = search.as_deref_mut().map_or_else(
                                     || invocation.raw_input.clone().unwrap_or_default(),
                                     Search::next_case,
                                 );
@@ -845,15 +844,12 @@ impl Executor {
                                 observed = Some(infrastructure("malformed observation"));
                                 break;
                             };
-                            let mut value = value;
-                            if worker.resource.oom_observed()? {
-                                value.kind = "oom".into();
-                            }
-                            if !["pass", "reject", "failure", "oom"].contains(&value.kind.as_str())
-                            {
+                            let Some(value) =
+                                admit_observation(value, worker.resource.oom_observed()?)
+                            else {
                                 observed = Some(infrastructure("unknown observation"));
                                 break;
-                            }
+                            };
                             if mode == "run" {
                                 report.adapter_ns =
                                     report.adapter_ns.saturating_add(value.elapsed_ns);
@@ -862,7 +858,7 @@ impl Executor {
                                         u64::try_from(case_start.elapsed().as_nanos())
                                             .unwrap_or(u64::MAX),
                                     );
-                                if let Some(search) = search.as_mut() {
+                                if let Some(search) = search.as_deref_mut() {
                                     search.observe(input, &value);
                                 }
                                 if value.kind == "reject" {
@@ -953,17 +949,11 @@ impl Executor {
                             "worker exited before orderly session completion",
                         ));
                     }
-                    if observed.is_none() && worker.resource.oom_observed()? {
-                        observed = Some(Observation {
-                            kind: if active.is_some() {
-                                "oom"
-                            } else {
-                                "infrastructure"
-                            }
-                            .into(),
-                            verification: "pending".into(),
-                            ..Observation::default()
-                        });
+                    if observed.is_none() {
+                        observed = resource_observation(
+                            Ok(worker.resource.oom_observed()?),
+                            active.is_some(),
+                        );
                     }
                     if observed.is_none() {
                         observed =
@@ -1129,11 +1119,22 @@ fn decode_unix_exit(code: i32, value: i32) -> io::Result<std::process::ExitStatu
 
 // Absence of OOM evidence keeps the case active; failure to read evidence is
 // infrastructure, rather than a claim that the application exceeded its limit.
-fn resource_observation(evidence: io::Result<bool>) -> Option<Observation> {
+// Positive backend evidence takes precedence over a worker's result label while
+// retaining its diagnostic and reproduction payload. Unknown labels need evidence.
+fn admit_observation(mut value: Observation, oom: bool) -> Option<Observation> {
+    if oom {
+        value.kind = "oom".into();
+    }
+    ["pass", "reject", "failure", "oom"]
+        .contains(&value.kind.as_str())
+        .then_some(value)
+}
+
+fn resource_observation(evidence: io::Result<bool>, active: bool) -> Option<Observation> {
     match evidence {
         Ok(false) => None,
         Ok(true) => Some(Observation {
-            kind: "oom".into(),
+            kind: if active { "oom" } else { "infrastructure" }.into(),
             verification: "pending".into(),
             ..Observation::default()
         }),
@@ -1420,7 +1421,7 @@ mod tests {
                     Instant::now(),
                     &mut store,
                     report,
-                    &mut None,
+                    None,
                 )
                 .unwrap()
         }
@@ -1430,6 +1431,205 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    struct NativeCgroupFault {
+        root: PathBuf,
+        control: &'static str,
+    }
+    #[cfg(target_os = "linux")]
+    impl NativeCgroupFault {
+        fn install(
+            fixture: &mut SessionFixture,
+            launch: usize,
+            control: &'static str,
+            keep_alive: bool,
+        ) -> Self {
+            assert!(
+                std::env::var_os("KIRYL_CGROUP_PARENT").is_some(),
+                "native fault tests require delegated cgroups"
+            );
+            fixture.config.limits.allow_best_effort = false;
+            let script_path = fixture.root.join(format!("session-{launch}"));
+            let script = std::fs::read_to_string(&script_path).unwrap();
+            let start = script.strip_suffix("sleep 60\n").unwrap();
+            let tail = if keep_alive {
+                let path = fixture.root.join("fault-ready");
+                let mut bytes = Vec::new();
+                wire::write(&mut bytes, json!({"kind":"fixture_fault_ready"})).unwrap();
+                std::fs::write(&path, bytes).unwrap();
+                format!("cat '{}'\nexec /bin/sleep 60\n", path.display())
+            } else {
+                "exit 0\n".into()
+            };
+            let fault = format!(
+                "set -eu\nmembership=$(sed -n 's/^0:://p' /proc/self/cgroup)\nname=${{membership##*/}}\ncase \"$name\" in kiryl-probe-{pid}-*) ;; *) exit 81 ;; esac\nowned=\"$KIRYL_CGROUP_PARENT/$name\"\nstat -c '%a' \"$owned/{control}\" > '{root}/fault-mode'\nprintf '%s\\n' \"$owned\" > '{root}/fault-cgroup'\nchmod 000 \"$owned/{control}\"\n{tail}",
+                pid = std::process::id(),
+                root = fixture.root.display(),
+            );
+            std::fs::write(script_path, format!("{start}{fault}")).unwrap();
+            Self {
+                root: fixture.root.clone(),
+                control,
+            }
+        }
+        fn cleanup(&self) -> io::Result<()> {
+            use std::os::unix::fs::PermissionsExt;
+            let marker = self.root.join("fault-cgroup");
+            let group = match std::fs::read_to_string(marker) {
+                Ok(path) => PathBuf::from(path.trim()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let parent = std::fs::canonicalize(std::env::var_os("KIRYL_CGROUP_PARENT").unwrap())?;
+            if group.parent() != Some(parent.as_path())
+                || !group
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&format!("kiryl-probe-{}-", std::process::id()))
+            {
+                return Err(io::Error::other(
+                    "refusing cleanup outside the fixture's owned cgroup",
+                ));
+            }
+            if !group.exists() {
+                return Ok(());
+            }
+            let original = std::fs::read_to_string(self.root.join("fault-mode"))?;
+            let mode = u32::from_str_radix(original.trim(), 8).map_err(io::Error::other)?;
+            std::fs::set_permissions(
+                group.join(self.control),
+                std::fs::Permissions::from_mode(mode),
+            )?;
+            // This concrete directory was identified by the fixture worker's own
+            // /proc membership after the parent's acknowledged attachment.
+            std::fs::write(group.join("cgroup.kill"), b"1")?;
+            let start = Instant::now();
+            loop {
+                match std::fs::remove_dir(&group) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(error) if start.elapsed() >= Duration::from_secs(5) => return Err(error),
+                    Err(_) => thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    impl Drop for NativeCgroupFault {
+        fn drop(&mut self) {
+            let _ = self.cleanup();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    fn native_failure_frames(replay: bool) -> Vec<Value> {
+        let request = if replay {
+            json!({"kind":"replay_case","test_id":"test"})
+        } else {
+            json!({"kind":"next","test_id":"test"})
+        };
+        vec![
+            json!({"kind":"ready","environment":{}}),
+            request,
+            json!({"kind":"result","case_id":u64::from(!replay),"observation":{"nodeid":"test","kind":"failure","fingerprint":"same","replay_token":[9]}}),
+            json!({"kind":"done"}),
+        ]
+    }
+    #[cfg(target_os = "linux")]
+    fn native_shrink_frames() -> Vec<Value> {
+        vec![
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"candidate","token":[2]}),
+            json!({"kind":"shrunk","token":[2],"complete":true}),
+            json!({"kind":"done"}),
+        ]
+    }
+    #[cfg(target_os = "linux")]
+    #[rstest::rstest]
+    #[case::failure_replay(2)]
+    #[case::failure_minimization(3)]
+    #[case::minimized_candidate_replay(4)]
+    #[ignore = "requires delegated cgroup"]
+    fn native_resource_counter_error_propagates_from_exploration_reproduction(
+        #[case] launch: usize,
+    ) {
+        let mut sessions = vec![
+            native_failure_frames(false),
+            native_failure_frames(true),
+            native_shrink_frames(),
+            vec![],
+        ];
+        sessions.truncate(launch);
+        sessions[launch - 1] = vec![json!({"kind":"ready","environment":{}})];
+        let mut fixture = SessionFixture::sequenced(&sessions);
+        let fault = NativeCgroupFault::install(&mut fixture, launch, "memory.events", false);
+        let result =
+            Executor::new(Arc::new(AtomicBool::new(false))).explore("test", fixture.config.clone());
+        fault.cleanup().unwrap();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            ExecutionError::Transport(io::Error::from_raw_os_error(libc::EACCES)).to_string()
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires delegated cgroup"]
+    fn native_resource_counter_error_propagates_from_operation_candidate_replay() {
+        let mut fixture = SessionFixture::sequenced(&[
+            native_shrink_frames(),
+            vec![json!({"kind":"ready","environment":{}})],
+        ]);
+        let fault = NativeCgroupFault::install(&mut fixture, 2, "memory.events", false);
+        let original = fixture.saved_original(Some(&[9]));
+        let result = Executor::new(Arc::new(AtomicBool::new(false))).operation(
+            &fixture.config,
+            &original,
+            Reproduction::Minimize,
+        );
+        fault.cleanup().unwrap();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            ExecutionError::Transport(io::Error::from_raw_os_error(libc::EACCES)).to_string()
+        );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires delegated cgroup"]
+    fn native_termination_failure_remains_sticky_after_authority_consumed() {
+        let mut fixture =
+            SessionFixture::sequenced(&[vec![json!({"kind":"ready","environment":{}})]]);
+        let fault = NativeCgroupFault::install(&mut fixture, 1, "cgroup.kill", true);
+        let mut worker = Worker::launch(&fixture.config).unwrap();
+        assert_eq!(
+            worker
+                .events
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap()
+                .unwrap()["kind"],
+            "ready"
+        );
+        worker.enqueue(json!({"kind":"start"}));
+        assert_eq!(
+            worker
+                .events
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap()
+                .unwrap()["kind"],
+            "fixture_fault_ready"
+        );
+        worker.terminate();
+        let first = worker.cleanup_error.clone().unwrap();
+        worker.terminate();
+        fault.cleanup().unwrap();
+        assert_eq!(worker.cleanup_error.as_deref(), Some(first.as_str()));
+        assert_eq!(
+            first,
+            io::Error::from_raw_os_error(libc::EACCES).to_string()
+        );
     }
     #[cfg(unix)]
     #[rstest::rstest]
@@ -1867,14 +2067,16 @@ mod tests {
         assert_eq!(worker.take_log().observed, 0);
     }
     #[rstest::rstest]
-    #[case::no_oom(Ok(false), None)]
-    #[case::observed_oom(Ok(true), Some(("oom", "pending", None)))]
-    #[case::unavailable_evidence(Err(io::Error::new(io::ErrorKind::PermissionDenied, "resource denied")), Some(("infrastructure", "pending", Some("resource evidence: resource denied"))))]
+    #[case::no_oom(Ok(false), true, None)]
+    #[case::observed_oom(Ok(true), true, Some(("oom", "pending", None)))]
+    #[case::unavailable_evidence(Err(io::Error::new(io::ErrorKind::PermissionDenied, "resource denied")), true, Some(("infrastructure", "pending", Some("resource evidence: resource denied"))))]
+    #[case::oom_before_case(Ok(true), false, Some(("infrastructure", "pending", None)))]
     fn resource_evidence_policy_preserves_classification(
         #[case] evidence: io::Result<bool>,
+        #[case] active: bool,
         #[case] expected: Option<(&str, &str, Option<&str>)>,
     ) {
-        let actual = resource_observation(evidence).map(|observation| {
+        let actual = resource_observation(evidence, active).map(|observation| {
             (
                 observation.kind,
                 observation.verification,
@@ -2088,6 +2290,154 @@ mod tests {
         let record: Value =
             serde_json::from_slice(&std::fs::read(result.original.unwrap()).unwrap()).unwrap();
         assert_eq!(record["input"], json!([4, 2]));
+    }
+    #[cfg(unix)]
+    fn unsuccessful_shrink_frames(candidate: &Value) -> Vec<Value> {
+        vec![
+            json!({"kind":"ready","environment":{}}),
+            json!({"kind":"candidate","token":candidate}),
+            json!({"kind":"error","message":"candidate verification unavailable"}),
+        ]
+    }
+    #[cfg(unix)]
+    #[test]
+    fn exploration_storage_error_preserves_another_pending_original() {
+        let fixture = SessionFixture::sequenced(&[initial_failure_frames()]);
+        let store =
+            ArtifactStore::open_matching(&fixture.config.output, &fixture.config.identity).unwrap();
+        let pending = fixture.config.output.join("finding-0.bin.pending");
+        std::fs::write(&pending, b"another writer's pending original").unwrap();
+        drop(store);
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap_err();
+        assert!(error.to_string().starts_with("storage:"), "{error}");
+        assert_eq!(
+            std::fs::read(pending).unwrap(),
+            b"another writer's pending original"
+        );
+        assert!(!fixture.config.output.join("finding-0.bin").exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn automatic_minimization_malformed_candidate_preserves_confirmed_original() {
+        let fixture = SessionFixture::sequenced(&[
+            initial_failure_frames(),
+            replay_frames("failure", "same"),
+            unsuccessful_shrink_frames(&json!("invalid")),
+        ]);
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"), "{error}");
+        let original: Value = serde_json::from_slice(
+            &std::fs::read(fixture.config.output.join("finding-0.bin")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(original["observation"]["kind"], "failure");
+        assert_eq!(original["observation"]["replay_token"], json!([9]));
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            "3"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn standalone_minimization_malformed_candidate_preserves_saved_record() {
+        let fixture = SessionFixture::sequenced(&[unsuccessful_shrink_frames(&json!("invalid"))]);
+        let original = fixture.saved_original(Some(&[9]));
+        let before = std::fs::read(&original).unwrap();
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, Reproduction::Minimize)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"), "{error}");
+        assert_eq!(std::fs::read(original).unwrap(), before);
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::different_assertion("failure", "different", "unstable", 1)]
+    #[case::passing("pass", "same", "unstable", 1)]
+    #[case::skipped("skip", "same", "unstable", 1)]
+    #[case::rejected("reject", "same", "unstable", 1)]
+    #[case::infrastructure("infrastructure", "same", "pending", 1)]
+    #[case::incomplete("none", "same", "pending", 0)]
+    fn unsuccessful_initial_verification_never_starts_minimization(
+        #[case] kind: &str,
+        #[case] fingerprint: &str,
+        #[case] expected: &str,
+        #[case] evidence_count: usize,
+    ) {
+        let fixture = SessionFixture::sequenced(&[
+            initial_failure_frames(),
+            replay_frames(kind, fingerprint),
+        ]);
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap();
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.verification, expected);
+        assert_eq!(outcome.derived.len(), evidence_count);
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            "2"
+        );
+        let original: Value =
+            serde_json::from_slice(&std::fs::read(outcome.original.as_ref().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(original["observation"]["fingerprint"], "same");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn automatic_unfinished_shrink_keeps_active_token_without_fresh_replay() {
+        let fixture = SessionFixture::sequenced(&[
+            initial_failure_frames(),
+            replay_frames("failure", "same"),
+            unsuccessful_shrink_frames(&json!([8])),
+        ]);
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap();
+        let outcome = &report.outcomes[0];
+        assert_eq!(outcome.verification, "confirmed");
+        assert_eq!(outcome.derived.len(), 3);
+        let retained = persisted_evidence(&outcome.derived[2]);
+        assert_eq!(retained["active_token"], json!([8]));
+        assert_eq!(retained["outcome"]["kind"], "infrastructure");
+        assert!(retained.get("token").is_none());
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            "3"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn standalone_unfinished_shrink_keeps_active_token_without_fresh_replay() {
+        let fixture = SessionFixture::sequenced(&[unsuccessful_shrink_frames(&json!([8]))]);
+        let original = fixture.saved_original(Some(&[9]));
+        let before = std::fs::read(&original).unwrap();
+        let report = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, Reproduction::Minimize)
+            .unwrap();
+        let outcome = report.outcomes.last().unwrap();
+        assert_eq!(outcome.verification, "pending");
+        assert_eq!(outcome.derived.len(), 3);
+        let retained = persisted_evidence(&outcome.derived[2]);
+        assert_eq!(retained["active_token"], json!([8]));
+        assert_eq!(retained["outcome"]["kind"], "infrastructure");
+        assert!(retained.get("token").is_none());
+        assert_eq!(std::fs::read(original).unwrap(), before);
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
     }
     proptest! {
         #[test]
@@ -2324,5 +2674,102 @@ mod tests {
         fn unix_exit_status_keeps_the_low_byte(value in any::<i32>()) {
             prop_assert_eq!(decode_unix_exit(libc::CLD_EXITED, value).unwrap().code(), Some(value & 0xff));
         }
+    }
+    #[rstest::rstest]
+    #[case::pass("pass", false, Some("pass"))]
+    #[case::reject("reject", false, Some("reject"))]
+    #[case::failure("failure", false, Some("failure"))]
+    #[case::oom("oom", false, Some("oom"))]
+    #[case::unknown("unknown", false, None)]
+    #[case::oom_overrides_pass("pass", true, Some("oom"))]
+    #[case::oom_overrides_failure("failure", true, Some("oom"))]
+    #[case::oom_overrides_unknown("unknown", true, Some("oom"))]
+    fn observed_result_admission_preserves_diagnostics(
+        #[case] kind: &str,
+        #[case] oom: bool,
+        #[case] expected: Option<&str>,
+    ) {
+        let observation = Observation {
+            kind: kind.into(),
+            rendered: Some("detail".into()),
+            fingerprint: Some("identity".into()),
+            replay_token: Some(vec![2, 7]),
+            ..Observation::default()
+        };
+        let actual = admit_observation(observation, oom).map(|value| {
+            (
+                value.kind,
+                value.rendered,
+                value.fingerprint,
+                value.replay_token,
+            )
+        });
+        let expected = expected.map(|kind| {
+            (
+                kind.to_owned(),
+                Some("detail".into()),
+                Some("identity".into()),
+                Some(vec![2, 7]),
+            )
+        });
+        assert_eq!(actual, expected);
+    }
+    #[cfg(unix)]
+    fn unread_command_stream_fixture() -> SessionFixture {
+        let mut fixture = SessionFixture::new(&[]);
+        fixture.config.limits.campaign_ms = Some(10_000);
+        fixture.config.limits.case_ms = 2_000;
+        let frames: Vec<Value> = std::iter::once(json!({"kind":"ready","environment":{}}))
+            .chain((1..=512).flat_map(|case_id| [
+                json!({"kind":"next","test_id":"test"}),
+                json!({"kind":"result","case_id":case_id,"observation":{"nodeid":"test","kind":"pass"}}),
+            ]))
+            .collect();
+        let mut bytes = Vec::new();
+        frames
+            .iter()
+            .try_for_each(|frame| wire::write(&mut bytes, frame.clone()))
+            .unwrap();
+        let path = fixture.root.join("unacknowledged-frames");
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(
+            &fixture.config.python,
+            format!("#!/bin/sh\ncat '{}'\nsleep 60\n", path.display()),
+        )
+        .unwrap();
+        fixture
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_command_backpressure_is_bounded_infrastructure() {
+        let fixture = unread_command_stream_fixture();
+        let mut store =
+            ArtifactStore::open_matching(&fixture.config.output, &fixture.config.identity).unwrap();
+        let mut report = ExecutionReport::default();
+        let result = Executor::new(Arc::new(AtomicBool::new(false)))
+            .session(
+                &fixture.config,
+                &Invocation {
+                    test_id: "test".into(),
+                    raw_input: Some(vec![255; 4096]),
+                },
+                "run",
+                None,
+                Instant::now(),
+                &mut store,
+                &mut report,
+                None,
+            )
+            .unwrap();
+        let observation = result.observation.unwrap();
+        assert_eq!(observation.kind, "infrastructure", "{observation:?}");
+        assert_eq!(
+            observation.rendered,
+            Some(mpsc::TrySendError::Full(json!(null)).to_string()),
+            "{observation:?}",
+        );
+        assert!(report.attempts > 0);
+        assert!(report.attempts <= 512);
     }
 }

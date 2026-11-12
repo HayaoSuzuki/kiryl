@@ -19,7 +19,19 @@ fi
 delegated="$cgroup_mount/kiryl-ci-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${RANDOM}"
 sudo mkdir "$delegated"
 cleanup() {
-  sudo rmdir "$delegated/controller" "$delegated"
+  # An exited command may still have kernel task teardown in progress. Wait for
+  # the owned controller to disappear; never kill or migrate an unknown process.
+  local attempt
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if sudo rmdir "$delegated/controller" 2>/dev/null; then
+      sudo rmdir "$delegated"
+      return
+    fi
+    sleep 0.05
+  done
+  echo "Delegated controller remained busy after command exit: $delegated" >&2
+  sudo cat "$delegated/controller/cgroup.procs" "$delegated/controller/cgroup.events" >&2
+  return 1
 }
 trap cleanup EXIT
 echo +memory | sudo tee "$delegated/cgroup.subtree_control" >/dev/null

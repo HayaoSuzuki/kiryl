@@ -138,3 +138,40 @@ The fixtures now obey startup attachment and write diagnostics before output flo
 bootstrap owns a typed resource-module double and source failure uses an absolute
 missing path. Native coverage now runs one hard-resource scenario per parameter
 to exercise actual Linux/Windows containment inside instrumentation.
+
+## Native3 evidence and coverage closure refinement
+
+Native run43127630794 at0da1d25 completes the autospec regressions on all six
+platform/interpreter cells. The PythonJSON union executes all2867statements and
+374branches, including native test implementations. This is development evidence,
+not acceptance: Windows instrumentation exposes a0.7second collection-budget
+assumption in the short-budget test; Linux3.14 successfully collects coverage but
+its launcher sees EBUSY during immediate controller removal. A separate Linux3.14
+hard control report has0attempts and only345ms remaining after collection under
+its8second budget. The case now allows10seconds (target blocks60seconds), the hard
+driver allows30seconds, and owned-controller removal retries for a bounded5seconds
+with process/membership diagnostics on failure. No unknown process is killed.
+
+Additional Rust cases cover pending-original collisions, malformed candidate
+transport, failed initial reproduction and unfinished active shrink evidence.
+Five Linux-only ignored cases exercise actual owned-kernel control permission
+failures; the collector includes ignored cases under explicit delegation. Runtime
+verification of those cases remains pending. Their restoration guard changes only
+the exact post-attachment cgroup recorded by its controlled worker.
+
+Five self-review passes per phase were performed for this refinement:
+
+| Pass | Design | Plan | Implementation | Tests |
+| --- | --- | --- | --- | --- |
+|1 ownership|Parent retains Search; sessions borrow|Keep corpus behavior before removing optional state|Option<&mutSearch> cannot remove the parent's engine|Existing persisted-corpus cases retained|
+|2 evidence|Resource evidence owns label precedence|Preserve diagnostic fields and admission order|Private admission combines OOM override and allowed labels|Eight independent label/evidence cases retain payloads|
+|3 failure|Native errors remain transport/storage errors|Inject owned permission failure after start acknowledgement|No generic backend mock or production fault flag|Four replay-phase errors and sticky cleanup tested natively next|
+|4 boundedness|Cleanup retains sole process ownership|Use finite traffic and explicit budgets|Controller cleanup waits without killing; Windows wait uses deadline|Backpressure fixture asserts full-channel infrastructure; live owned job tests expired deadline|
+|5 scope|No schema or command change|Compare named-revision native reports before acceptance|Same positive-OOM and inactive-worker infrastructure policy reused|324local Rust cases pass; cross-platform Clippy and native matrix remain separate evidence|
+
+The Windows deadline testcase was observed failing compilation before the private
+wait boundary existed, then cross-target strictClippy passed. The eight admission
+cases likewise failed before implementation and then passed. Native timings and
+OS errors are not replaced by unit doubles. No inline or file-level coverage
+exclusions were added. Defensive test-helper paths remain visible and will be
+closed using the next native report.

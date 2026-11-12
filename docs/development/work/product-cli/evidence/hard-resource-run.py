@@ -147,7 +147,7 @@ def check_run(binary, python, root, evidence, name, memory):
             "--python",
             str(python),
             "--duration",
-            "8",
+            "30",
             "--case-timeout",
             "7",
             "--slice",

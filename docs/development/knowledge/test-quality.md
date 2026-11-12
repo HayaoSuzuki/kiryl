@@ -7,7 +7,7 @@ sources:
 - id: plan
   resource: ../work/product-cli/test-coverage-plan.md
   working_tree: modified
-  sha256: 068641eb3754d111a4c74d2062ea81f5c02ce9064ae7df1d9bf510c737380420
+  sha256: 2237c95e292f77e92a779b4248189d33a4295f8a04229f3c582600430900459c
 - id: manifest
   resource: ../../../Cargo.toml
   revision: 0cfe0b2406db2f4cb0a0457bd663a736bbdb4970

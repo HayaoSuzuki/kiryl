@@ -165,9 +165,12 @@ impl Job {
         if unsafe { TerminateJobObject(self.handle.0, 1) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        let start = Instant::now();
+        self.wait_quiescence(Instant::now() + Duration::from_millis(500))
+    }
+
+    fn wait_quiescence(&self, deadline: Instant) -> io::Result<()> {
         while self.active()? != 0 {
-            if start.elapsed() > Duration::from_millis(500) {
+            if Instant::now() > deadline {
                 return Err(io::Error::other("job cleanup did not quiesce"));
             }
             thread::sleep(Duration::from_millis(2));
@@ -308,6 +311,16 @@ mod tests {
             oom: false,
         };
         assert!(job.terminate().is_err());
+    }
+    #[test]
+    fn occupied_job_reports_expired_cleanup_deadline() {
+        let child = OwnedChild::new();
+        let job = Job::attach(&child.0, 1 << 30).unwrap();
+        let deadline = Instant::now();
+        assert_eq!(
+            job.wait_quiescence(deadline).unwrap_err().to_string(),
+            "job cleanup did not quiesce"
+        );
     }
     #[test]
     fn empty_job_has_zero_active_processes() {
