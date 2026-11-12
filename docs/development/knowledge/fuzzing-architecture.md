@@ -32,15 +32,19 @@ sources:
 - id: product-report
   resource: ../../../src/report.rs
   working_tree: modified
-  sha256: 6b1b5c27afd57fcdfdc459d85c93e4d63b37c52eac97f73aadef0b150c7122f4
+  sha256: 6aa680917862fb370422dcfc221501e1dae95a5958bb803698792a80d197dc98
 - id: product-command
   resource: ../../../src/command.rs
   working_tree: modified
-  sha256: 0b94e7bb1af3496e748a14bb7ca615f6d161e30ed52c3fead725e7410ae27d73
+  sha256: b3278305a0bd5c39405204490028888d5ae204eca7a6207cc9dc334b6412c3f6
 - id: product-verification
   resource: ../../../src/verification.rs
   working_tree: modified
   sha256: c3530e563d93ae709f4b0b98129b86ab8a7e28cf3bb0eb6e938820108d4727e6
+- id: presentation-policy
+  resource: ../work/product-cli/presentation-policy-plan.md
+  working_tree: untracked
+  sha256: f8e105b6eba95b5865e8fa2b8106f0b689e35f1bedeec556ed49e75767d40ee7
 - id: session-operation
   resource: ../work/product-cli/session-operation-design.md
   working_tree: untracked
@@ -274,3 +278,15 @@ different payload; do not add independent nullable control fields.[^session-oper
 [^session-operation]: [Typed session operation design and verification](../work/product-cli/session-operation-design.md).
 
 [The runtime-state contract](runtime-state.md) owns the broader enum/type boundaries, diagnostics and unknown-label compatibility for both implementations.
+
+Reproduction command rendering receives the original requested Limits directly.
+The command transaction snapshots it before collection-time budget subtraction;
+report JSON contains display fields and never selects memory, case-timeout or
+best-effort options. A private borrowed presentation context owns command encoding
+for standalone and nested campaign findings. Its Rust helper API requires the
+typed policy, while actual CLI arguments, report/storage schemas and replay-lock
+lifetime retain their contracts. Reconsider the policy inputs when a new replay
+option is implemented; do not reintroduce display-key configuration lookups.
+[^presentation-policy][^product-command][^product-report]
+
+[^presentation-policy]: [Typed presentation policy design and verification](../work/product-cli/presentation-policy-plan.md).

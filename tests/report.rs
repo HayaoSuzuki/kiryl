@@ -16,7 +16,10 @@ fn finding_reports_present_values_and_reproduction_commands() {
         &mut report,
         std::path::Path::new("kiryl"),
         std::path::Path::new("python"),
-        true,
+        &kiryl::executor::Limits {
+            allow_best_effort: true,
+            ..kiryl::executor::Limits::default()
+        },
     )
     .unwrap();
     assert_eq!(report["outcomes"][0]["input_values"], "x=7");
@@ -111,7 +114,11 @@ fn campaign_raw_finding_replay_uses_effective_limits_without_minimization() {
         &mut report,
         std::path::Path::new("kiryl"),
         std::path::Path::new("python"),
-        false,
+        &kiryl::executor::Limits {
+            tree_memory_bytes: 2_097_152,
+            case_ms: 1250,
+            ..kiryl::executor::Limits::default()
+        },
     )
     .unwrap();
     let finding = &report["targets"][0]["report"]["outcomes"][0];
@@ -161,7 +168,7 @@ fn campaign_finding_presentation_propagates_malformed_record() {
             &mut report,
             std::path::Path::new("kiryl"),
             std::path::Path::new("python"),
-            false
+            &kiryl::executor::Limits::default()
         )
         .is_err()
     );
@@ -174,4 +181,82 @@ fn infrastructure_status_without_outcomes_is_an_error() {
         kiryl::report::exit_code(&json!({"status":"infrastructure"})),
         2
     );
+}
+
+#[rstest::rstest]
+#[case::missing(json!({}), false)]
+#[case::malformed(json!({"effective_limits":"display-only"}), true)]
+#[case::conflicting(json!({"effective_limits":{"tree_memory_bytes":1,"case_ms":1,"allow_best_effort":false}}), true)]
+fn reproduction_commands_use_typed_policy_instead_of_display_fields(
+    #[case] displayed: serde_json::Value,
+    #[case] present: bool,
+) {
+    let root = common::TemporaryRoot::new("typed-presentation");
+    let path = root.join("finding-0.bin");
+    std::fs::write(
+        &path,
+        br#"{"version":1,"test_id":"test_x","input":[],"observation":{"replay_token":[1]}}"#,
+    )
+    .unwrap();
+    let mut report = displayed.clone();
+    report["outcomes"] = json!([{"original":path}]);
+    let limits = kiryl::executor::Limits {
+        tree_memory_bytes: 3 * 1024 * 1024,
+        case_ms: 1250,
+        allow_best_effort: true,
+        ..kiryl::executor::Limits::default()
+    };
+    kiryl::report::present_findings(
+        &mut report,
+        std::path::Path::new("kiryl"),
+        std::path::Path::new("python"),
+        &limits,
+    )
+    .unwrap();
+    assert_eq!(
+        report["outcomes"][0]["replay_command"],
+        json!([
+            "kiryl",
+            "replay",
+            path,
+            "--python",
+            "python",
+            "--best-effort",
+            "--memory-mib",
+            "3",
+            "--case-timeout",
+            "1.25"
+        ])
+    );
+    assert_eq!(
+        report.get("effective_limits"),
+        displayed.get("effective_limits")
+    );
+    assert_eq!(report.get("effective_limits").is_some(), present);
+}
+
+proptest! {
+    #[test]
+    fn reproduction_commands_preserve_generated_requested_policy(memory_mib in 1_u64..65_536, seconds in 1_u64..600) {
+        let root = common::TemporaryRoot::new("generated-presentation");
+        let path = root.join("finding-0.bin");
+        std::fs::write(&path, br#"{"version":1,"test_id":"test_x","input":[],"observation":{"replay_token":null}}"#).unwrap();
+        let limits = kiryl::executor::Limits {
+            tree_memory_bytes: memory_mib * 1024 * 1024,
+            case_ms: seconds * 1000,
+            ..kiryl::executor::Limits::default()
+        };
+        let mut report = json!({"outcomes":[{"original":path}]});
+        kiryl::report::present_findings(
+            &mut report,
+            std::path::Path::new("kiryl"),
+            std::path::Path::new("python"),
+            &limits,
+        ).unwrap();
+        prop_assert_eq!(&report["outcomes"][0]["replay_command"], &json!([
+            "kiryl", "replay", path, "--python", "python",
+            "--memory-mib", memory_mib.to_string(), "--case-timeout", seconds.to_string()
+        ]));
+        prop_assert!(report["outcomes"][0].get("minimize_command").is_none());
+    }
 }

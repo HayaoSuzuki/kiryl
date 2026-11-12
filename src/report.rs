@@ -1,87 +1,84 @@
 //! Finding presentation owns user-facing values and replay command construction.
-use crate::executor::{OutcomeKind, Reproduction};
+use crate::executor::{Limits, OutcomeKind, Reproduction};
 use serde_json::{Value, json};
 use std::{io, path::Path};
 
-/// Add available rendered values and argument arrays suitable for fresh operations.
+/// Add values and reproduction commands using the original requested policy.
+/// Display fields in the report never select execution options; collection-time
+/// budget deductions must not replace the caller's requested limits.
 /// # Errors
 /// Returns missing/corrupt original records rather than presenting invented evidence.
 pub fn present_findings(
     report: &mut Value,
     executable: &Path,
     python: &Path,
-    best_effort: bool,
+    limits: &Limits,
 ) -> io::Result<()> {
-    let limits = report["effective_limits"].clone();
-    annotate(report, executable, python, best_effort, &limits)?;
+    let presentation = FindingPresentation {
+        executable,
+        python,
+        limits,
+    };
+    presentation.annotate(report)?;
     if let Some(targets) = report["targets"].as_array_mut() {
         for target in targets {
-            annotate(
-                &mut target["report"],
-                executable,
-                python,
-                best_effort,
-                &limits,
-            )?;
+            presentation.annotate(&mut target["report"])?;
         }
     }
     Ok(())
 }
-fn annotate(
-    report: &mut Value,
-    executable: &Path,
-    python: &Path,
-    best_effort: bool,
-    limits: &Value,
-) -> io::Result<()> {
-    let Some(outcomes) = report["outcomes"].as_array_mut() else {
-        return Ok(());
-    };
-    for outcome in outcomes {
-        let Some(path) = outcome["original"].as_str().map(str::to_owned) else {
-            continue;
+// One policy owner renders both standalone and campaign findings. The context
+// borrows the original typed request instead of reparsing presentation JSON.
+struct FindingPresentation<'a> {
+    executable: &'a Path,
+    python: &'a Path,
+    limits: &'a Limits,
+}
+impl FindingPresentation<'_> {
+    fn annotate(&self, report: &mut Value) -> io::Result<()> {
+        let Some(outcomes) = report["outcomes"].as_array_mut() else {
+            return Ok(());
         };
-        let description = crate::artifacts::describe_original(Path::new(&path))?;
-        outcome["input_values"] = json!(description.rendered);
-        outcome["failure_fingerprint"] = json!(description.fingerprint);
-        for command in [Reproduction::Replay, Reproduction::Minimize] {
-            if command == Reproduction::Minimize && !description.replayable {
+        for outcome in outcomes {
+            let Some(path) = outcome["original"].as_str().map(str::to_owned) else {
                 continue;
-            }
-            let mut args = vec![
-                json!(executable),
-                json!(command),
-                json!(path),
-                json!("--python"),
-                json!(python),
-            ];
-            if best_effort {
-                args.push(json!("--best-effort"));
-            }
-            if let Some(memory) = limits["tree_memory_bytes"].as_u64() {
+            };
+            let description = crate::artifacts::describe_original(Path::new(&path))?;
+            outcome["input_values"] = json!(description.rendered);
+            outcome["failure_fingerprint"] = json!(description.fingerprint);
+            for command in [Reproduction::Replay, Reproduction::Minimize] {
+                if command == Reproduction::Minimize && !description.replayable {
+                    continue;
+                }
+                let mut args = vec![
+                    json!(self.executable),
+                    json!(command),
+                    json!(path),
+                    json!("--python"),
+                    json!(self.python),
+                ];
+                if self.limits.allow_best_effort {
+                    args.push(json!("--best-effort"));
+                }
                 args.extend([
                     json!("--memory-mib"),
-                    json!((memory / (1024 * 1024)).to_string()),
-                ]);
-            }
-            if let Some(case) = limits["case_ms"].as_u64() {
-                args.extend([
+                    json!((self.limits.tree_memory_bytes / (1024 * 1024)).to_string()),
                     json!("--case-timeout"),
                     json!(
-                        std::time::Duration::from_millis(case)
+                        std::time::Duration::from_millis(self.limits.case_ms)
                             .as_secs_f64()
                             .to_string()
                     ),
                 ]);
+                let key = match command {
+                    Reproduction::Replay => "replay_command",
+                    Reproduction::Minimize => "minimize_command",
+                };
+                outcome[key] = json!(args);
             }
-            let key = match command {
-                Reproduction::Replay => "replay_command",
-                Reproduction::Minimize => "minimize_command",
-            };
-            outcome[key] = json!(args);
         }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Completion severity is independent of report nesting and wire encoding.

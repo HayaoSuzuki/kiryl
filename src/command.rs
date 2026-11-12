@@ -93,8 +93,9 @@ pub fn execute(
     {
         selection = context.selection().to_vec();
     }
-    let requested_limits = serde_json::to_value(&limits)?;
-    context["effective_limits"] = requested_limits.clone();
+    let requested_limits = limits.clone();
+    let displayed_limits = serde_json::to_value(&requested_limits)?;
+    context["effective_limits"] = displayed_limits.clone();
     context["selection"] = json!(selection);
     let overall_start = std::time::Instant::now();
     let discovered = crate::executor::collect(&python, &selection, &limits, &flag)?;
@@ -151,10 +152,7 @@ pub fn execute(
             )?)?
         }
     };
-    let best_effort = requested_limits["allow_best_effort"]
-        .as_bool()
-        .unwrap_or(false);
-    report["effective_limits"] = requested_limits;
+    report["effective_limits"] = displayed_limits;
     report["remaining_execution_limits"] = remaining_execution_limits;
     report["environment_identity"] = environment_identity;
     report["schema_version"] = json!(1);
@@ -164,7 +162,7 @@ pub fn execute(
         &mut report,
         &env::current_exe()?,
         &replay_python,
-        best_effort,
+        &requested_limits,
     )?;
     Ok(CommandOutcome {
         report,
