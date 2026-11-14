@@ -454,6 +454,25 @@ impl ArtifactStore {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_store_rejects_original_before_allocating_an_id() {
+        use std::os::unix::ffi::OsStringExt;
+        let mut store = ArtifactStore {
+            root: PathBuf::from(std::ffi::OsString::from_vec(vec![0xff])),
+            lock: PathBuf::new(),
+            next: 0,
+        };
+        assert_eq!(
+            store
+                .record_original("test", &[1], &serde_json::json!({}))
+                .unwrap_err()
+                .to_string(),
+            "artifact path is not UTF-8"
+        );
+        assert_eq!(store.next, 0);
+    }
+
     #[test]
     fn exhausted_ids_fail_before_publishing_or_wrapping() {
         let mut store = ArtifactStore {
