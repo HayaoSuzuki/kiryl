@@ -2708,6 +2708,103 @@ mod tests {
         assert!(!fixture.config.output.join("finding-0.bin").exists());
     }
     #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::initial_replay(1, 2)]
+    #[case::pending_shrink(2, 3)]
+    #[case::checked_shrink(3, 4)]
+    fn exploration_evidence_collision_preserves_original_and_stops_reproduction(
+        #[case] evidence_id: u64,
+        #[case] launches: u64,
+    ) {
+        let fixture = SessionFixture::sequenced(&[
+            initial_failure_frames(),
+            replay_frames(Some(OutcomeKind::Failure), "same"),
+            shrink_frames(&json!([8])),
+            replay_frames(Some(OutcomeKind::Failure), "same"),
+        ]);
+        let mut store =
+            ArtifactStore::open_matching(&fixture.config.output, &fixture.config.identity).unwrap();
+        store.save_corpus(&[vec![4, 2]]).unwrap();
+        drop(store);
+        let pending = fixture
+            .config
+            .output
+            .join(format!("evidence-{evidence_id}.bin.pending"));
+        std::fs::write(&pending, b"another writer's pending evidence").unwrap();
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .explore("test", fixture.config.clone())
+            .unwrap_err();
+        assert!(matches!(error, ExecutionError::Storage(_)), "{error}");
+        assert_eq!(
+            std::fs::read(&pending).unwrap(),
+            b"another writer's pending evidence"
+        );
+        assert!(!pending.with_extension("").exists());
+        let original: Value = serde_json::from_slice(
+            &std::fs::read(fixture.config.output.join("finding-0.bin")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(original["input"], json!([4, 2]));
+        assert_eq!(original["observation"]["fingerprint"], "same");
+        assert_eq!(original["observation"]["replay_token"], json!([9]));
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            launches.to_string()
+        );
+        drop(
+            ArtifactStore::open_matching(&fixture.config.output, &fixture.config.identity).unwrap(),
+        );
+    }
+
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::replay(
+        Reproduction::Replay,
+        replay_frames(Some(OutcomeKind::Failure), "same"),
+        0,
+        1
+    )]
+    #[case::pending_shrink(Reproduction::Minimize, shrink_frames(&json!([8])), 0, 1)]
+    #[case::checked_shrink(Reproduction::Minimize, shrink_frames(&json!([8])), 1, 2)]
+    fn operation_evidence_collision_preserves_original_and_releases_writer(
+        #[case] mode: Reproduction,
+        #[case] frames: Vec<Value>,
+        #[case] evidence_id: u64,
+        #[case] launches: u64,
+    ) {
+        let fixture =
+            SessionFixture::sequenced(&[frames, replay_frames(Some(OutcomeKind::Failure), "same")]);
+        let original = fixture.saved_original(Some(&[9]));
+        let before = std::fs::read(&original).unwrap();
+        let pending = fixture
+            .config
+            .output
+            .join(format!("evidence-{evidence_id}.bin.pending"));
+        std::fs::write(&pending, b"another writer's pending evidence").unwrap();
+        let error = Executor::new(Arc::new(AtomicBool::new(false)))
+            .operation(&fixture.config, &original, mode)
+            .unwrap_err();
+        assert!(matches!(error, ExecutionError::Storage(_)), "{error}");
+        assert_eq!(std::fs::read(&original).unwrap(), before);
+        assert_eq!(
+            std::fs::read(&pending).unwrap(),
+            b"another writer's pending evidence"
+        );
+        assert!(!pending.with_extension("").exists());
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join("launch-count"))
+                .unwrap()
+                .trim(),
+            launches.to_string()
+        );
+        drop(
+            ArtifactStore::open_matching(&fixture.config.output, &fixture.config.identity).unwrap(),
+        );
+    }
+
+    #[cfg(unix)]
     #[test]
     fn automatic_minimization_malformed_candidate_preserves_confirmed_original() {
         let fixture = SessionFixture::sequenced(&[

@@ -1,6 +1,7 @@
 mod common;
 use common::TemporaryRoot;
 use kiryl::artifacts::ArtifactStore;
+use proptest::prelude::*;
 use std::fs;
 
 #[test]
@@ -238,15 +239,35 @@ fn oversized_corpus_input_is_rejected() {
 }
 #[rstest::rstest]
 #[case::empty_test_id("", vec![])]
+#[case::oversized_test_id(&"x".repeat(16 * 1024 + 1), vec![])]
+#[case::oversized_utf8_test_id(&"猫".repeat(5462), vec![])]
 #[case::oversized_input("x", vec![0;4097])]
 fn invalid_original_metadata(#[case] test_id: &str, #[case] input: Vec<u8>) {
     let root = TemporaryRoot::new("invalid-metadata");
     let mut store = ArtifactStore::open(&root).unwrap();
-    assert!(
+    assert_eq!(
         store
             .record_original(test_id, &input, &serde_json::json!({}))
-            .is_err()
+            .unwrap_err()
+            .to_string(),
+        "original metadata exceeds limits"
     );
+    assert!(!root.join("finding-0.bin").exists());
+    assert!(!root.join("finding-0.bin.pending").exists());
+}
+
+#[rstest::rstest]
+#[case::maximum_ascii("x".repeat(16 * 1024))]
+#[case::maximum_utf8(format!("{}x", "猫".repeat(5461)))]
+fn maximum_test_id_round_trips(#[case] test_id: String) {
+    let root = TemporaryRoot::new("maximum-test-id");
+    let mut store = ArtifactStore::open(&root).unwrap();
+    let original = store
+        .record_original(&test_id, &[0, 255], &serde_json::json!({"kind":"failure"}))
+        .unwrap();
+    let finding = store.load_finding(&original).unwrap();
+    assert_eq!(finding.test_id, test_id);
+    assert_eq!(finding.input, [0, 255]);
 }
 
 #[rstest::rstest]
@@ -664,6 +685,46 @@ fn typed_finding_rejects_malformed_observation_without_repair() {
     let before = fs::read(&original).unwrap();
     assert!(store.load_finding(&original).is_err());
     assert_eq!(fs::read(&original).unwrap(), before);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn corpus_round_trip_preserves_order_and_duplicates(
+        inputs in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..128), 0..8),
+    ) {
+        let corpus = [inputs.as_slice(), inputs.as_slice()].concat();
+        let root = TemporaryRoot::new("generated-corpus");
+        let mut store = ArtifactStore::open(&root).unwrap();
+        store.save_corpus(&corpus).unwrap();
+        drop(store);
+        let reopened = ArtifactStore::open(&root).unwrap();
+        prop_assert_eq!(reopened.load_corpus().unwrap(), corpus);
+    }
+
+    #[test]
+    fn generated_evidence_retains_original_input_and_lineage(
+        test_id in ".{1,24}",
+        input in proptest::collection::vec(any::<u8>(), 0..256),
+        candidate in proptest::collection::vec(any::<u8>(), 0..128),
+    ) {
+        let root = TemporaryRoot::new("generated-lineage");
+        let mut store = ArtifactStore::open(&root).unwrap();
+        let observation = serde_json::json!({"kind":"failure","fingerprint":"original"});
+        let original = store.record_original(&test_id, &input, &observation).unwrap();
+        let before = fs::read(&original).unwrap();
+        let evidence = serde_json::json!({"input":candidate,"verification":"pending"});
+        let derived = store.derived(&original, &evidence).unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&fs::read(&derived).unwrap()).unwrap();
+        let finding = store.load_finding(&original).unwrap();
+        prop_assert_ne!(&derived, &original);
+        prop_assert_eq!(fs::read(&original).unwrap(), before);
+        prop_assert_eq!(finding.test_id, test_id);
+        prop_assert_eq!(finding.input, input);
+        prop_assert_eq!(&record["evidence"], &evidence);
+        prop_assert_eq!(&record["original"], &serde_json::json!(std::path::Path::new(&original).file_name().unwrap().to_str().unwrap()));
+    }
 }
 
 #[cfg(target_os = "linux")]
