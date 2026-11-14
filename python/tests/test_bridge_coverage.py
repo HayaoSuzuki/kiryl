@@ -3,10 +3,13 @@
 
 import json
 import sys
+import unittest
 from collections.abc import Iterator  # noqa: TC003 -- pytest fixture annotation
+from functools import partial
 from operator import attrgetter
 from pathlib import Path  # noqa: TC003 -- pytest fixture annotation
 from random import Random
+from typing import cast
 from unittest.mock import create_autospec, patch
 
 import adapter
@@ -55,6 +58,8 @@ def bridge_project(tmp_path: Path) -> Iterator[Path]:
         "def test_failure(value):\n    assert value != 0\n"
         "@given(value=st.just(0))\n"
         "def test_rejection(value):\n    hypothesis.assume(False)\n"
+        "@given(value=st.just(0))\n"
+        "def test_inner_skip(value):\n    pytest.skip('inside property')\n"
         "calls = []\n"
         "@settings(database=None)\n"
         "@given(value=st.integers(0, 100))\n"
@@ -233,6 +238,59 @@ def test_unittest_instance_lifecycle_edges(
     node = f"test_bridge_edges.py::{name}::test_property"
     evidence = run_session([str(bridge_project), "-q"], [Invocation(node, (b"",))])
     assert evidence.cases[0].kind == kind
+
+
+class LifecycleCase(unittest.TestCase):
+    """Keep method restoration observable after the adapter releases the case."""
+
+    __test__ = False
+    events: list[str]
+
+    def probe(self) -> None:
+        """Record the original class method instead of the injected operation."""
+        self.events.append("class")
+
+
+@pytest.fixture(params=["class", "instance"])
+def lifecycle_case(request: pytest.FixtureRequest) -> tuple[LifecycleCase, str]:
+    """Supply one real case with either inherited or instance-owned behavior."""
+    case = LifecycleCase("probe")
+    case.events = []
+    ownership = cast("str", request.param)
+    if ownership == "instance":
+        vars(case)["probe"] = partial(case.events.append, "instance")
+    return case, ownership
+
+
+def test_unittest_context_restores_original_method(
+    lifecycle_case: tuple[LifecycleCase, str],
+) -> None:
+    """A released unittest case still executes its original method."""
+    case, ownership = lifecycle_case
+    session = adapter._Session([], None)  # noqa: SLF001 -- real lifecycle boundary
+    session._unittest_context(  # noqa: SLF001 -- behavior after owned method restoration
+        case, partial(case.events.append, "replacement")
+    )
+    case.probe()
+    assert case.events == ["replacement", ownership]
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        ("test_pass", ResultKind.PASS),
+        ("test_rejection", ResultKind.REJECT),
+        ("test_inner_skip", ResultKind.SKIP),
+    ],
+)
+def test_non_failure_does_not_claim_database_replay(
+    bridge_project: Path, name: str, kind: ResultKind
+) -> None:
+    """Passing, rejected and skipped inputs have no saved failure to replay."""
+    node = f"test_bridge_edges.py::{name}"
+    evidence = run_session([str(bridge_project), "-q"], [Invocation(node, (b"",))])
+    assert evidence.cases[0].kind == kind
+    assert evidence.cases[0].database_replay is False
 
 
 def test_driver_receives_setup_skip(bridge_project: Path) -> None:

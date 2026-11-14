@@ -1,12 +1,16 @@
 # Copyright (c) 2026 kiryl contributors
 """Product discovery is machine readable despite arbitrary target output."""
 
+import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 COLLECT = Path(__file__).parents[1] / "kiryl_adapter" / "collect.py"
 
@@ -65,6 +69,30 @@ def test_collection_honors_pytest_selection(collection_project: Path) -> None:
     assert json.loads(selected.stdout)["nodeids"] == ["test_targets.py::test_property"]
 
 
+def test_collection_normalizes_symlinked_project_root(tmp_path: Path) -> None:
+    """Aliases of one project retain its canonical source identity."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pytest.ini").write_text("[pytest]\n")
+    (project / "test_target.py").write_text(
+        "from hypothesis import given, strategies as st\n"
+        "@given(st.just(0))\n"
+        "def test_property(value):\n    assert value == 0\n"
+    )
+    alias = tmp_path / "alias"
+    alias.symlink_to(project, target_is_directory=True)
+    result = subprocess.run(  # noqa: S603 -- owned project and canonical-root boundary
+        [sys.executable, str(COLLECT), str(alias), "--rootdir", str(alias)],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["root"] == str(project.resolve())
+    assert "test_target.py" in data["sources"]
+
+
 def test_collection_error_is_json(tmp_path: Path) -> None:
     """Collection import failures return a structured infrastructure error."""
     (tmp_path / "test_bad.py").write_text("raise RuntimeError('broken import')")
@@ -87,6 +115,27 @@ def test_source_snapshot_changes_and_excludes_environment(tmp_path: Path) -> Non
     assert set(before) == {"app.py"}
     source.write_text("value = 2\n")
     assert source_hashes(tmp_path) != before
+
+
+@settings(max_examples=24, deadline=None)
+@given(
+    directories=st.lists(
+        st.text(alphabet="abcxyz", min_size=1, max_size=6), min_size=1, max_size=3
+    ),
+    content=st.binary(max_size=64),
+)
+def test_source_snapshot_includes_nested_files(directories: list[str], content: bytes) -> None:
+    """Source identity includes files at arbitrary bounded directory depths."""
+    from collect import source_hashes  # noqa: PLC0415 -- product-only module
+
+    with tempfile.TemporaryDirectory(prefix="kiryl-source-snapshot-") as directory:
+        root = Path(directory)
+        source = root.joinpath(*directories, "app.py")
+        source.parent.mkdir(parents=True)
+        source.write_bytes(content)
+        assert source_hashes(root) == {
+            source.relative_to(root).as_posix(): hashlib.sha256(content).hexdigest(),
+        }
 
 
 def test_unsupported_runtime_rejects_before_target_import(tmp_path: Path) -> None:
