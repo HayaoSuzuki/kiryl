@@ -11,7 +11,7 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path  # noqa: TC003 -- pytest introspects annotations
 from types import ModuleType, SimpleNamespace
 from typing import BinaryIO, Protocol, cast
-from unittest.mock import Mock, create_autospec, patch
+from unittest.mock import Mock, call, create_autospec, patch
 
 import adapter
 import pytest
@@ -434,9 +434,14 @@ def bootstrap_streams(patches: ExitStack) -> tuple[io.BytesIO, io.BytesIO]:
     return incoming, output
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
+@pytest.mark.parametrize(
+    ("platform", "core_limit_calls"), [("darwin", 1), ("linux", 1), ("win32", 0)]
+)
 def test_bootstrap_reserves_streams_before_platform_setup(
-    bootstrap_streams: tuple[io.BytesIO, io.BytesIO], patches: ExitStack, platform: str
+    bootstrap_streams: tuple[io.BytesIO, io.BytesIO],
+    patches: ExitStack,
+    platform: str,
+    core_limit_calls: int,
 ) -> None:
     """Native setup follows the controller's start acknowledgment on every platform."""
     incoming, output = bootstrap_streams
@@ -472,6 +477,8 @@ def test_bootstrap_reserves_streams_before_platform_setup(
         )
     )
     control, request = _bootstrap()
+    limit = cast("Mock", vars(sys.modules["resource"])["setrlimit"])
+    assert limit.call_args_list == [call(4, (0, 0))] * core_limit_calls
     assert control is output
     assert request == {"version": 1, "kind": "start"}
     output.seek(0)
